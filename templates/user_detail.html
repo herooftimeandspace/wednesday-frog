@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel narrow user-detail-panel">
+  {% if managed_user %}
+  <div class="section-header user-detail-header">
+    <div>
+      <h2>Edit user</h2>
+      <p class="subtle">Manage username, role, and password for {{ managed_user.username }}.</p>
+    </div>
+    <div class="button-row user-detail-actions">
+      <span class="badge">{{ managed_user.role }}</span>
+      <button type="submit" form="user-detail-form">Save user</button>
+    </div>
+  </div>
+  <form method="post" action="/users/{{ managed_user.id }}" class="stack-form user-detail-form" id="user-detail-form">
+  {% else %}
+  <div class="section-header user-detail-header">
+    <div>
+      <h2>Create user</h2>
+      <p class="subtle">Create a new local user. New accounts start as standard users.</p>
+    </div>
+    <div class="button-row user-detail-actions">
+      <span class="badge">standard</span>
+      <button type="submit" form="user-detail-form">Create user</button>
+    </div>
+  </div>
+  <form method="post" action="/users" class="stack-form user-detail-form" id="user-detail-form">
+  {% endif %}
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="user-detail-grid">
+    <label class="user-name-field">
+      <span>Username</span>
+      <input type="text" name="username" value="{{ managed_user.username if managed_user else '' }}" required />
+    </label>
+    <label>
+      <span>Role</span>
+      <select name="role" {% if not can_edit_role %}disabled{% endif %}>
+        {% for role in role_options %}
+        <option
+          value="{{ role }}"
+          {% if managed_user and managed_user.role == role %}selected{% elif not managed_user and role == 'standard' %}selected{% endif %}
+        >{{ role }}</option>
+        {% endfor %}
+      </select>
+      {% if not can_edit_role %}
+      <small class="subtle">The last admin must remain an admin.</small>
+      {% endif %}
+    </label>
+    <label class="full-span-field">
+      <span>{% if managed_user %}New password{% else %}Password{% endif %}</span>
+      <input type="password" name="{% if managed_user %}new_password{% else %}password{% endif %}" {% if not managed_user %}required{% endif %} />
+      {% if managed_user %}
+      <small class="subtle">Leave blank to keep the current password.</small>
+      {% endif %}
+    </label>
+    {% if managed_user and not can_edit_role %}
+    <input type="hidden" name="role" value="{{ managed_user.role }}" />
+    {% endif %}
+    </div>
+  </form>
+
+  {% if managed_user %}
+  <form method="post" action="/users/{{ managed_user.id }}/delete" class="danger-zone user-danger-zone">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button type="submit" class="danger-button">Delete user</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

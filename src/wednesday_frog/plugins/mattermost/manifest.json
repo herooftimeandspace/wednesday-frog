@@ -1,0 +1,7 @@
+{
+  "plugin_id": "mattermost",
+  "display_name": "Mattermost",
+  "version": "1.0.0",
+  "description": "Send frog images to Mattermost channels using the REST API.",
+  "entrypoint": "wednesday_frog.plugins.mattermost.plugin:MattermostPlugin"
+}

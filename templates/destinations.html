@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="two-column destinations-shell">
+  <article class="panel destinations-create-panel">
+    <div class="section-header destinations-panel-header">
+      <div>
+        <h2>Create destination</h2>
+        <p class="subtle">Pick a plugin, give the route a clear name, and then fill in the plugin-specific settings on the next page.</p>
+      </div>
+    </div>
+    <form method="post" action="/destinations" class="stack-form destination-create-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div class="destination-create-row">
+        <label class="destination-create-plugin">
+          <span>Plugin</span>
+          <select name="plugin_id">
+            {% for loaded in plugin_list %}
+            <option value="{{ loaded.manifest.plugin_id }}">{{ loaded.manifest.display_name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="destination-create-name">
+          <span>Name</span>
+          <input type="text" name="name" placeholder="Production announcements" />
+        </label>
+      </div>
+      <div class="destination-create-action">
+        <button type="submit" class="destination-create-submit">Create destination</button>
+      </div>
+    </form>
+  </article>
+
+  <article class="panel destinations-list-panel">
+    <div class="section-header destinations-panel-header">
+      <div>
+        <h2>Configured destinations</h2>
+        <p class="subtle">Open any destination to edit plugin settings, secrets, and channels.</p>
+      </div>
+      <span class="badge destinations-total-badge">{{ destinations|length }}<span>total</span></span>
+    </div>
+    {% if destinations %}
+    <table class="data-table compact destinations-table">
+      <thead>
+        <tr>
+          <th scope="col">Destination</th>
+          <th scope="col">Plugin</th>
+          <th scope="col">Owner</th>
+          <th scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for destination in destinations %}
+        <tr>
+          <td><a href="/destinations/{{ destination.id }}" class="destination-list-link destinations-table-link">{{ destination.name }}</a></td>
+          <td><span class="badge">{{ destination.plugin_id }}</span></td>
+          <td class="subtle">
+            {% if current_user_is_admin and destination.owner %}
+            {{ destination.owner.username }}
+            {% else %}
+            -
+            {% endif %}
+            {% if not destination.enabled %}
+            <span class="badge warn">Disabled</span>
+            {% endif %}
+          </td>
+          <td><a href="/destinations/{{ destination.id }}" class="button-link destinations-open-link">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>No destinations yet.</p>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

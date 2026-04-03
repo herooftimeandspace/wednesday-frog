@@ -1,0 +1,1 @@
+"""Delivery adapter package."""

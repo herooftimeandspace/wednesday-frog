@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="csrf-token" content="{{ csrf_token }}" />
+    <title>{% block title %}Wednesday Frog{% endblock %}</title>
+    <link rel="stylesheet" href="{{ request.url_for('static', path='style.css') }}" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">Frog-as-a-Service</p>
+          <h1><a href="/" class="brand-link">Wednesday Frog</a></h1>
+          <p class="subtle">Everyone needs to know it is Wednesday, my dudes.</p>
+        </div>
+        {% if current_user %}
+        <nav class="site-nav">
+          <a href="/">Dashboard</a>
+          <a href="/destinations">Destinations</a>
+          <a href="/test">Test</a>
+          <a href="/history">History</a>
+          <a href="/account">Account</a>
+          {% if current_user_is_admin %}
+          <a href="/settings">Settings</a>
+          <a href="/users">Users</a>
+          {% endif %}
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <button type="submit" class="ghost-button">Sign out</button>
+          </form>
+        </nav>
+        {% endif %}
+      </header>
+
+      {% if fallback_asset_active %}
+      <section class="flash-stack">
+        <div class="flash flash-warn">Fallback asset active: {{ active_asset.original_filename }}</div>
+      </section>
+      {% endif %}
+
+      {% if flashes %}
+      <section class="flash-stack">
+        {% for flash in flashes %}
+        <div class="flash flash-{{ flash.level }}">{{ flash.message }}</div>
+        {% endfor %}
+      </section>
+      {% endif %}
+
+      <main class="content">{% block content %}{% endblock %}</main>
+
+      <footer class="site-footer">
+        <p class="subtle">github.com/herooftimeandspace created this app.</p>
+        <script type='text/javascript' src='https://storage.ko-fi.com/cdn/widget/Widget_2.js'></script>
+        <script type='text/javascript'>kofiwidget2.init('Support me on Ko-fi', '#5AAB49', 'B0B615LXDL');kofiwidget2.draw();</script>
+      </footer>
+    </div>
+
+    <script src="{{ request.url_for('static', path='app.js') }}"></script>
+  </body>
+</html>

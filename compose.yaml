@@ -1,0 +1,10 @@
+services:
+  wednesday-frog:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./frog_data:/data
+    restart: unless-stopped

@@ -1,0 +1,127 @@
+# Wednesday Frog Plugin + Optional HA Execution Plan
+
+## Summary
+- `IMPLEMENTATION_PLAN.md` remains the source of truth and must be updated before any plan-affecting code change.
+- Keep Python `3.12+` and evolve the app into a schema-driven, bundled-plugin platform with optional HA support rather than replacing the current stack.
+- Preserve the simple single-node Docker path, but add a supported Redis + PostgreSQL HA profile that guarantees only one scheduled Wednesday send per slot across the cluster.
+- Fold in the final hardening items: fail-safe plugin loading, token-protected metrics, dual-key secret rotation, graceful shutdown for in-flight sends, explicit persistence guidance, local plugin-dev CLI helpers, multi-user ownership, and a site-wide attribution footer.
+
+## Key Changes
+- Replace hardcoded service enums, `SERVICE_SPECS`, and fixed adapter registration with a `PluginManager` that discovers bundled plugins under `src/wednesday_frog/plugins/<plugin_id>/`.
+- Require each plugin directory to contain `manifest.json` and `plugin.py`. A valid manifest declares `plugin_id`, `display_name`, `version`, `description`, and `entrypoint`.
+- Define a `FrogConnector` ABC with `validate_config()`, `send_payload()`, `handle_error()`, `destination_config_schema()`, `destination_secret_schema()`, `channel_config_schema()`, and `channel_secret_schema()`.
+- Make plugin loading fail-safe: a broken manifest, import error, or schema error marks only that plugin as unavailable, logs a redacted error, and exposes the failure in the dashboard, `/health/ready`, and `/metrics` without crashing the worker.
+- Keep plugins repo-bundled in this phase, but structure discovery behind a pluggable backend so a future trusted `/data/plugins` source can be added without another registry refactor.
+- Replace the single-admin account model with role-based local users. The first setup-created user is an `admin`; later users default to `standard`. Admins can fully manage users and see all destinations. Standard users can only manage their own account and the destinations, channels, secrets, and test/history records they own.
+- Add `wednesday-frog check` as a contributor CLI command that validates plugin manifests, imports, and JSON Schema compatibility locally.
+- Add `wednesday-frog check --emit-plugin-env <plugin_id>` to print placeholder env and Compose snippets for local plugin testing. It emits documentation text only and never writes files or prints real secrets.
+- Render destination and channel admin forms from plugin-provided JSON Schema. The supported schema subset for this phase is fixed to `object`, `properties`, `required`, `default`, `description`, `enum`, scalar types `string|boolean|integer`, and formats `password|uri|textarea`.
+- Keep secrets separate from plain config even with schema-driven forms. Secret fields remain masked, encrypted at rest, and only support save, replace, clear, and live test flows.
+- Treat existing built-ins as bundled plugins with stable IDs: `slack`, `teams`, `mattermost`, `discord`, and `zoom`. The database stores `plugin_id` as the canonical destination type.
+- Add user ownership to persisted records:
+  - `admin_users.role`
+  - `service_destinations.owner_user_id`
+  - `delivery_runs.initiated_by_user_id`
+  - delivery history remains visible to admins globally and to standard users only for their own destinations or their own manually initiated runs
+- Add startup-safe schema upgrades for existing SQLite installs so the new columns and defaults are backfilled without requiring operators to wipe their database.
+- Support both `WEDNESDAY_FROG_DATABASE_URL` and `DATABASE_URL`. SQLite stays the default for single-node mode and must use WAL plus a busy timeout; PostgreSQL is required for HA mode.
+- Support both `WEDNESDAY_FROG_REDIS_URL` and `REDIS_URL`. HA mode is enabled only when Redis and PostgreSQL are both configured.
+- Keep APScheduler for cron evaluation. In HA mode, each node evaluates the schedule, but only one node may execute it by acquiring a Redis `SET NX EX` lock keyed by the scheduled slot and then inserting a `delivery_runs` row protected by a PostgreSQL unique constraint on `(trigger_kind, scheduled_slot)`.
+- Add `delivery_runs.scheduled_slot` for dedupe, `service_destinations.consecutive_permanent_failures`, `auto_disabled_at`, and `disable_reason` for the circuit breaker, and `asset_records.processing_status` plus `processing_error` for asynchronous asset preparation.
+- Keep the default schedule at Wednesday `12:00 PM` in `UTC`, with `misfire_grace_time=900`, `coalesce=True`, and `max_instances=1`.
+- Keep the weekly cadence fixed to Wednesday only. The UI must not expose raw cron editing or day-of-week changes. Instead, settings expose:
+  - a human-readable schedule summary
+  - dropdowns for hour and minute selection
+  - an optional manual time input that accepts common 12-hour or 24-hour clock formats and normalizes them back into the internal Wednesday cron expression
+- Add Prometheus-compatible `GET /metrics`, but make it safe by default: require `WEDNESDAY_FROG_METRICS_TOKEN` or `_FILE`, and reject requests without the matching bearer token or `X-Metrics-Token` header. If no token is configured, `/metrics` returns `404`.
+- Expose metrics for run totals, delivery-attempt totals by plugin and status, plugin load failures, destination enabled counts, scheduler state, lock-acquisition outcomes, and fallback-asset usage.
+- Keep the existing real `/api/v1/destinations/{id}/test` behavior. Test sends hit the live delivery path and record test runs, but they do not increment the circuit-breaker failure counter.
+- Add a centralized outbound HTTP layer used by every plugin. It must block loopback, private, link-local, multicast, and reserved IPs after DNS resolution unless the host or CIDR appears in `WEDNESDAY_FROG_OUTBOUND_ALLOWLIST`.
+- Harden bootstrap secret handling with `_FILE` variants, startup rejection of placeholder or shorter-than-32-character values, explicit high-memory Argon2id parameters, and redacted structured logging.
+- Make key rotation HA-safe: add `WEDNESDAY_FROG_PREVIOUS_MASTER_KEY` and `_FILE` support so decryption tries current key first and previous key second during rollout. `wednesday-frog rekey-secrets` rewrites stored secrets with the current key, after which the previous key can be removed.
+- Add a strict CSP and remove inline scripts so the UI can run with a self-hosted-only policy.
+- Add a site-wide footer on every rendered page that attributes the app to `github.com/herooftimeandspace`.
+- Add the requested Ko-fi widget to the footer across all pages. Because that widget requires an external script and inline initialization, the CSP is updated narrowly to allow the Ko-fi CDN plus the required inline widget bootstrap.
+- Keep the timezone control as a full IANA timezone dropdown with `UTC` pinned first and a short common-zones section above the full list; changing the selection auto-saves settings and updates the visible schedule summary so the selected timezone is obvious to the end user.
+- Enforce a 5 MB upload cap, validate PNG/JPEG uploads, and process derivatives in a background worker before activation. If the active uploaded asset is missing, fall back to the bundled `wednesday-frog.png`, repair settings, show a dashboard warning, and badge the UI clearly when the fallback asset is active.
+- The dashboard should show the active asset as a centered image preview inside its card instead of only showing a filename. Dashboard cards should center their text and buttons to reduce the clunky layout, while the recent-runs section remains table-oriented and left-aligned.
+- The dashboard manual-send result box should use a cleaner, more compact status-panel treatment so it feels less clunky without changing the existing theme or the richer history/test result views elsewhere.
+- The dashboard configuration-validation mini-cards should use a denser layout with tighter spacing and more compact card sizing so the section feels less bulky while keeping the same information.
+- The `/test` page manual-run panel should place the primary `Run now` button in the upper-right header area so the panel uses its horizontal space better without changing the current theme.
+- The `/test` page per-destination cards should use the same denser header-action layout so the test button sits in the card header instead of leaving awkward dead space.
+- The `/history` page should emphasize attempt tables first and hide the raw JSON summary behind a collapsible `See details` disclosure. The redundant `trigger | status | initiated_by` line directly under the run number should be removed to reduce noise.
+- The `/history` page should also use a tighter card/table presentation so each run consumes less vertical space.
+- The `/settings` page should use a compact control-bar layout:
+  - the fixed weekly schedule summary sits at the top
+  - timezone, hour, minute, and custom time appear on one line
+  - scheduler enablement is controlled by a dropdown in the upper-right of the settings header
+  - the active image preview appears inline beside the asset selector and upload field
+  - caption text moves to the bottom just above the save button
+  - the timezone control should give up more width, and its flex item should be allowed to shrink, so the adjacent hour dropdown remains fully visible in tighter desktop widths
+- The `/destinations` list and destination-detail pages should use denser admin-style layouts:
+  - the create-destination form should use a compact inline row instead of a tall stacked form
+  - the configured-destinations total badge should be visually centered inside its bubble
+  - the configured-destinations list should use a simpler table layout aligned like `/users`, with clear columns for destination metadata and action
+  - the create-destination submit action should become a full-width centered button
+  - destination and channel edit forms should group fields into compact responsive grids with header-level save/test actions
+  - secret editors should use smaller card treatments so they read as support controls rather than full primary panels
+- The `/account`, `/users`, and `/users/{id}` pages should use the same denser admin-style treatment as the refined destination pages:
+  - the account password form should feel like a compact settings panel, but the current password, new password, and confirm password inputs should stack one per line for clearer scanning
+  - the users list should use a simpler table layout with `Username`, `Role`, and `Action` columns so the admin data aligns cleanly
+  - the `/users` create-user button should sit below the description text as a full-width centered action
+  - the create/edit user form should group fields into a tighter responsive grid with header-level primary actions
+- The `/login` and `/setup` screens should use the same polished narrow-panel treatment as the refined account screens so the first-run and sign-in flows match the rest of the app, including visually centered auth badge text in the header bubbles.
+- Auto-disable a destination after 5 consecutive `permanent_failure` results on scheduled or manual full runs. Any successful send resets the counter.
+- Run containers as a non-root `froguser` and add an entrypoint that ensures `/data` is writable.
+- Make persistence explicit:
+  - `compose.yaml` uses a persistent host mount such as `./frog_data:/data` so SQLite, uploaded assets, and file-backed bootstrap secrets survive rebuilds.
+  - `compose.ha.yaml` uses a named Docker volume for PostgreSQL data and a persistent shared app-data volume for `/data` in the single-host HA example.
+  - README documents that true multi-host HA requires shared read-write storage for `/data/assets` and file-backed keys across app nodes, or a later external asset-store enhancement.
+- Set `stop_grace_period: 60s` on the app service in `compose.ha.yaml`, and document that this is required so slow in-flight uploads can finish cleanly before Docker sends `SIGKILL`.
+- Change shutdown behavior so the scheduler stops accepting new work, waits up to the configured grace window for active sends to finish, flushes final run state, and only then exits.
+- Update `.gitignore` so local runtime state is never committed: ignore SQLite files such as `*.db`, `*.sqlite*`, local persistence directories such as `data/` and `frog_data/`, and file-backed secret artifacts, while keeping example env files tracked.
+- Add user-management pages and account flows:
+  - `/account` for the current signed-in user to review account info and change their password
+  - `/users` for admins to list users
+  - `/users/new` for admins to create additional users
+  - `/users/{id}` for admins to edit usernames, roles, and passwords
+  - `/users/{id}/delete` for admins to delete other users while preventing deletion of the last admin
+- Scope the existing destination, test, validation, and history pages to the signed-in user unless the user is an admin.
+
+## Test Plan
+- Verify plugin discovery loads valid plugins, isolates broken ones, and never lets a plugin failure crash startup or request handling.
+- Verify `wednesday-frog check` catches malformed manifests, bad entrypoints, and unsupported schema constructs.
+- Verify `wednesday-frog check --emit-plugin-env <plugin_id>` prints stable placeholder env and Compose output for built-in plugins without leaking secrets.
+- Verify schema-driven admin forms render correctly, validate server-side, and preserve masked-secret behavior.
+- Verify startup rejects weak bootstrap secrets, dual-key decryption works during rotation, and `rekey-secrets` rewrites data safely.
+- Verify `/metrics` returns `404` when no metrics token is configured, rejects bad tokens, and exposes Prometheus-format data when the correct token is present.
+- Verify the outbound SSRF guard blocks private and reserved targets by default and still allows explicitly allowlisted internal Mattermost hosts.
+- Verify SQLite WAL and busy-timeout behavior, PostgreSQL compatibility, and concurrent admin writes plus delivery writes.
+- Verify the first setup-created user becomes an admin, later created users default to standard, admins can perform full CRUD on users, and the last admin cannot be removed or demoted away.
+- Verify standard users can change their own password, cannot administer other users, and only see or mutate their own destinations, channels, secrets, test runs, and history.
+- Verify HA scheduling by running two app instances against the same Postgres and Redis services and confirming only one scheduled send is recorded and delivered for a given slot.
+- Verify the settings UI no longer exposes editable raw cron, only Wednesday time controls, and that valid manual inputs such as `9:05`, `09:05`, `9:05 am`, and `21:05` normalize to the expected internal Wednesday schedule.
+- Verify uploads enforce the 5 MB cap, background processing transitions assets through `pending|ready|failed`, missing assets fall back cleanly to the bundled frog, and the dashboard badges fallback mode.
+- Verify the dashboard renders an authenticated active-asset preview image and centered card layout without changing the left-aligned recent-runs table.
+- Verify the dashboard manual-send result box uses the compact dashboard-specific styling hook.
+- Verify the dashboard configuration-validation section uses the denser dashboard-specific card styling hook.
+- Verify the `/test` page manual-run panel renders the button in its header layout hook.
+- Verify the `/test` page destination cards use the denser header-action layout hook.
+- Verify the `/history` page places the attempts table before the collapsible summary details and uses the `See details` disclosure hook.
+- Verify the `/history` page uses the tighter run-card/table styling hook.
+- Verify the `/settings` page uses the compact inline control layout, scheduler dropdown, and inline asset preview hook.
+- Verify the `/destinations` templates use the compact list/detail layout hooks.
+- Verify the account and user-management templates use the compact admin-layout hooks.
+- Verify the login and setup templates use the refined narrow auth-panel layout hooks.
+- Verify the circuit breaker disables destinations after 5 permanent failures, ignores test sends for the threshold, and resets on success.
+- Verify graceful shutdown waits for an active send to finish within the configured window and that `compose.ha.yaml`'s `stop_grace_period: 60s` is sufficient for a deliberately slowed upload test.
+- Verify `.gitignore` excludes SQLite files and local persistence directories while preserving tracked examples and documentation.
+- Verify every page includes the footer attribution text and the Ko-fi widget markup.
+- Verify the local git remote points at the corrected GitHub repo slug.
+
+## Assumptions
+- This phase remains single-organization, not SaaS multi-tenant, but destinations and account activity are now partitioned per local user.
+- Plugins are trusted, bundled, first-party modules in the repo; external pip-installed plugins and `/data/plugins` loading are future extensions, not part of this phase.
+- SQLite remains the default local deployment path. PostgreSQL plus Redis is the supported HA profile.
+- `/metrics` is internal monitoring only and is token-protected by default rather than public.
+- Signed session cookies remain sufficient for multi-node auth as long as every node shares the same session secret.

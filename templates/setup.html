@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Setup | Wednesday Frog{% endblock %}
+
+{% block content %}
+<section class="panel narrow auth-panel auth-setup-panel">
+  <div class="section-header auth-header">
+    <div>
+      <p class="eyebrow">First run</p>
+      <h2>Set up Wednesday Frog</h2>
+      <p class="subtle">Create the local admin account that can manage schedules, assets, destinations, channels, and encrypted secrets.</p>
+    </div>
+    <span class="badge auth-badge">Step 1</span>
+  </div>
+  <form method="post" class="stack-form auth-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="auth-grid">
+      <label class="full-span-field">
+        <span>Setup token</span>
+        <input type="password" name="setup_token" required />
+      </label>
+      <label>
+        <span>Admin username</span>
+        <input type="text" name="username" required />
+      </label>
+      <label>
+        <span>Password</span>
+        <input type="password" name="password" required />
+      </label>
+    </div>
+    <div class="button-row auth-actions">
+      <button type="submit" class="auth-submit">Create admin</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,1 @@
+"""Teams plugin package."""

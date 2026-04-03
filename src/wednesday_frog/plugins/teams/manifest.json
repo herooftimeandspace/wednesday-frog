@@ -1,0 +1,7 @@
+{
+  "plugin_id": "teams",
+  "display_name": "Teams",
+  "version": "1.0.0",
+  "description": "Send frog images to Microsoft Teams via channel webhooks.",
+  "entrypoint": "wednesday_frog.plugins.teams.plugin:TeamsPlugin"
+}

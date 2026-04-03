@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <form method="post" enctype="multipart/form-data" class="stack-form" id="settings-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="section-header settings-header">
+      <div>
+        <h2>App settings</h2>
+        <p class="subtle">Default schedule is Wednesday at noon in UTC until you change the time.</p>
+      </div>
+      <label class="settings-status-field">
+        <span>Scheduler</span>
+        <select name="schedule_enabled">
+          <option value="enabled" {% if settings.schedule_enabled %}selected{% endif %}>Enabled</option>
+          <option value="disabled" {% if not settings.schedule_enabled %}selected{% endif %}>Disabled</option>
+        </select>
+      </label>
+    </div>
+
+    <label class="settings-static-field">
+      <span>Weekly schedule</span>
+      <input type="text" value="Every Wednesday" disabled />
+      <small class="subtle">Wednesday is fixed. Choose only what time the frog should go out.</small>
+    </label>
+
+    <div class="settings-inline-row">
+      <label class="settings-inline-field settings-timezone-field">
+        <span>Timezone</span>
+        <select
+          name="timezone"
+          id="timezone-select"
+          data-auto-submit-on-change="true"
+          data-timezone-label-target="timezone-current-label"
+        >
+          <optgroup label="Common timezones">
+            {% for timezone_name in common_timezones %}
+            <option value="{{ timezone_name }}" {% if timezone_name == settings.timezone %}selected{% endif %}>
+              {{ timezone_name | replace("_", " ") }}
+            </option>
+            {% endfor %}
+          </optgroup>
+          <optgroup label="All IANA timezones">
+            {% for timezone_name in timezone_options %}
+            {% if timezone_name not in common_timezones %}
+            <option value="{{ timezone_name }}" {% if timezone_name == settings.timezone %}selected{% endif %}>
+              {{ timezone_name | replace("_", " ") }}
+            </option>
+            {% endif %}
+            {% endfor %}
+          </optgroup>
+        </select>
+      </label>
+      <label class="settings-inline-field settings-hour-field">
+        <span>Hour</span>
+        <select name="schedule_hour">
+          {% for option in schedule_hour_options %}
+          <option value="{{ option.value }}" {% if option.value == selected_schedule_hour %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="settings-inline-field settings-minute-field">
+        <span>Minute</span>
+        <select name="schedule_minute">
+          {% for option in schedule_minute_options %}
+          <option value="{{ option.value }}" {% if option.value == selected_schedule_minute %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="settings-inline-field settings-custom-time-field">
+        <span>Custom time</span>
+        <input type="text" name="schedule_time_text" value="" placeholder="{{ selected_schedule_time_text }} or 9:05 AM" />
+      </label>
+    </div>
+
+    <p class="subtle settings-inline-help">
+      <strong>Selected timezone:</strong> <span id="timezone-current-label">{{ settings_timezone_label }}</span>.
+      Accepts common 12-hour or 24-hour time formats such as <code>9:05 AM</code> or <code>21:05</code>.
+      Current schedule is <strong id="schedule-summary-label">{{ schedule_summary }}</strong>.
+    </p>
+
+    <div class="settings-asset-row">
+      <div class="settings-asset-preview-wrap">
+        <img src="{{ active_asset_url }}" alt="Preview of the selected active image" class="settings-asset-preview" />
+      </div>
+      <label class="settings-inline-field settings-asset-select-field">
+        <span>Active image</span>
+        <select name="asset_id">
+          {% for asset in assets %}
+          <option value="{{ asset.id }}" {% if asset.id == settings.active_asset_id %}selected{% endif %}>
+            {{ asset.original_filename }} | {{ asset.processing_status }} | {{ asset.media_type }} | {{ asset.size_bytes }} bytes
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="settings-inline-field settings-upload-field">
+        <span>Upload replacement image</span>
+        <input type="file" name="asset_file" accept=".png,.jpg,.jpeg,image/png,image/jpeg" />
+      </label>
+    </div>
+
+    <small class="subtle">Uploads are capped at 5 MB and are processed in the background before activation.{% if fallback_asset_active %} <span class="badge warn">Fallback</span>{% endif %}</small>
+
+    <label class="settings-caption-field">
+      <span>Caption text</span>
+      <textarea name="caption_text" rows="3">{{ settings.caption_text }}</textarea>
+    </label>
+    <button type="submit">Save settings</button>
+  </form>
+</section>
+{% endblock %}

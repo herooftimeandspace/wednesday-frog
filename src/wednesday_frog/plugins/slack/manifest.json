@@ -1,0 +1,7 @@
+{
+  "plugin_id": "slack",
+  "display_name": "Slack",
+  "version": "1.0.0",
+  "description": "Send frog images to Slack channels with a bot token.",
+  "entrypoint": "wednesday_frog.plugins.slack.plugin:SlackPlugin"
+}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel test-manual-panel">
+  <div class="section-header test-manual-header">
+    <h2>Manual run</h2>
+    <button
+      type="button"
+      data-post-json-url="/api/v1/runs"
+      data-post-json-target="test-run-result"
+    >Run now</button>
+  </div>
+  <p>Use this page to send the active frog image immediately without waiting for Wednesday noon.</p>
+  <pre id="test-run-result" class="result-box">No run started yet.</pre>
+</section>
+
+<section class="panel">
+  <h2>Per-destination test sends</h2>
+  {% if destinations %}
+  <div class="card-grid test-destination-grid">
+    {% for destination in destinations %}
+    <article class="mini-card test-destination-card">
+      <div class="section-header test-destination-header">
+        <div>
+          <h3>{{ destination.name }}</h3>
+          <p class="subtle">{{ destination.plugin_id }}</p>
+        </div>
+        <button
+          type="button"
+          data-post-json-url="/api/v1/destinations/{{ destination.id }}/test"
+          data-post-json-target="dest-result-{{ destination.id }}"
+        >Test destination</button>
+      </div>
+      <pre id="dest-result-{{ destination.id }}" class="result-box small-box">No test started.</pre>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p>No destinations are configured yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

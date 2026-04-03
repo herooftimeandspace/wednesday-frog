@@ -1,0 +1,7 @@
+{
+  "plugin_id": "discord",
+  "display_name": "Discord",
+  "version": "1.0.0",
+  "description": "Send frog images to Discord webhooks.",
+  "entrypoint": "wednesday_frog.plugins.discord.plugin:DiscordPlugin"
+}

@@ -1,0 +1,35 @@
+# Local environment files
+.env
+.env.local
+.env.*.local
+
+# Python bytecode and tooling caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+
+# Local app runtime data
+data/
+frog_data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-*
+*.key
+
+# OS/editor noise
+.DS_Store

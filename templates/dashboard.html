@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-shell">
+<section class="hero-grid">
+  <article class="panel dashboard-card">
+    <p class="eyebrow">Schedule</p>
+    <h2>Next frog drop</h2>
+    <p class="stat">{{ next_run_time if next_run_time else "Scheduler not active" }}</p>
+    <p class="subtle">{{ schedule_summary }}</p>
+  </article>
+  <article class="panel dashboard-card">
+    <p class="eyebrow">Health</p>
+    <h2>Destination readiness</h2>
+    <p class="stat">{{ validation.destinations | length }} configured</p>
+    <p class="subtle">{{ "Ready" if validation.ok else "Needs attention" }}</p>
+  </article>
+  <article class="panel dashboard-card">
+    <p class="eyebrow">Quick actions</p>
+    <h2>Manual send</h2>
+    <button
+      type="button"
+      data-post-json-url="/api/v1/runs"
+      data-post-json-target="manual-run-result"
+    >Send frog now</button>
+    <pre id="manual-run-result" class="result-box dashboard-result-box">No manual run yet.</pre>
+  </article>
+</section>
+
+<section class="panel dashboard-card dashboard-asset-card">
+  <p class="eyebrow">Asset</p>
+  <h2>Active asset</h2>
+  {% if validation.fallback_asset_active %}
+  <p><span class="badge warn">Fallback asset active</span></p>
+  {% endif %}
+  <div class="asset-preview-frame">
+    <img src="{{ active_asset_url }}" alt="Preview of the active Wednesday Frog asset" class="asset-preview-image" />
+  </div>
+  <p class="subtle">{{ validation.active_asset_filename }}</p>
+  {% if validation.issues %}
+  <ul class="issue-list">
+    {% for issue in validation.issues %}
+    <li>{{ issue }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="good">Primary asset is ready.</p>
+  {% endif %}
+</section>
+
+{% if plugin_failures %}
+<section class="panel">
+  <h2>Plugin load failures</h2>
+  <ul class="issue-list">
+    {% for failure in plugin_failures %}
+    <li><strong>{{ failure.plugin_id }}</strong>: {{ failure.reason }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="panel dashboard-card">
+  <h2>Configuration validation</h2>
+  {% if validation.destinations %}
+  <div class="card-grid dashboard-validation-grid">
+    {% for destination in validation.destinations %}
+    <article class="mini-card dashboard-mini-card dashboard-validation-card">
+      <h3>{{ destination.name }}</h3>
+      <p class="subtle">{{ destination.plugin_id }} {% if not destination.enabled %}(disabled){% endif %}</p>
+      {% if destination.auto_disabled_at %}
+      <p class="subtle">Auto-disabled: {{ destination.disable_reason }}</p>
+      {% endif %}
+      {% if destination.issues %}
+      <ul class="issue-list">
+        {% for issue in destination.issues %}
+        <li>{{ issue }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="good">Ready to send.</p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p>No destinations are configured yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel recent-runs-panel">
+  <h2>Recent runs</h2>
+  {% if recent_runs %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Trigger</th>
+        <th>Status</th>
+        <th>Started</th>
+        <th>Summary</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in recent_runs %}
+      <tr>
+        <td>{{ run.id }}</td>
+        <td>{{ run.trigger_kind }}</td>
+        <td>{{ run.status }}</td>
+        <td>{{ run.started_at }}</td>
+        <td>{{ run.summary_json }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No delivery history yet.</p>
+  {% endif %}
+</section>
+</div>
+{% endblock %}

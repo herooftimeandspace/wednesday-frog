@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="two-column users-shell">
+  <article class="panel users-create-panel">
+    <div class="users-create-body">
+      <div>
+        <h2>Create user</h2>
+        <p class="subtle">New users default to the standard role. Admins can promote them later if needed.</p>
+      </div>
+    </div>
+    <a href="/users/new" class="button-link users-create-link">Add user</a>
+  </article>
+
+  <article class="panel users-list-panel">
+    <div class="section-header users-panel-header">
+      <div>
+        <h2>Users</h2>
+        <p class="subtle">Open a user to manage their role, username, or password.</p>
+      </div>
+      <span class="badge">{{ users|length }} total</span>
+    </div>
+    {% if users %}
+    <table class="data-table compact users-table">
+      <thead>
+        <tr>
+          <th scope="col">Username</th>
+          <th scope="col">Role</th>
+          <th scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for managed_user in users %}
+        <tr>
+          <td><a href="/users/{{ managed_user.id }}" class="destination-list-link users-table-link">{{ managed_user.username }}</a></td>
+          <td><span class="badge">{{ managed_user.role }}</span></td>
+          <td><a href="/users/{{ managed_user.id }}" class="button-link users-manage-link">Manage</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p>No users exist yet.</p>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

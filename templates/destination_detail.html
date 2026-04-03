@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel destination-detail-panel">
+  <div class="section-header destination-detail-header">
+    <div>
+      <p class="eyebrow">{{ plugin.manifest.display_name if plugin else destination.plugin_id }}</p>
+      <h2>{{ destination.name }}</h2>
+      <div class="destination-meta-row subtle">
+        <span class="badge">{{ destination.plugin_id }}</span>
+        {% if current_user_is_admin and destination.owner %}
+        <span>Owner: {{ destination.owner.username }}</span>
+        {% endif %}
+        {% if not destination.enabled %}
+        <span class="badge warn">Disabled</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="button-row destination-detail-actions">
+      <button
+        type="button"
+        data-post-json-url="/api/v1/destinations/{{ destination.id }}/test"
+        data-post-json-target="destination-test-result"
+      >Test this destination</button>
+      <button type="submit" form="destination-edit-form">Save destination</button>
+    </div>
+  </div>
+  <pre id="destination-test-result" class="result-box destination-result-box">No test run yet.</pre>
+
+  {% if destination_validation %}
+  <ul class="issue-list destination-issue-list">
+    {% for issue in destination_validation %}
+    <li>{{ issue }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <form method="post" action="/destinations/{{ destination.id }}" class="stack-form destination-edit-form" id="destination-edit-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="destination-config-grid">
+    <label class="destination-name-field">
+      <span>Name</span>
+      <input type="text" name="name" value="{{ destination.name }}" />
+    </label>
+    <label class="inline-toggle destination-toggle-field">
+      <input type="checkbox" name="enabled" {% if destination.enabled %}checked{% endif %} />
+      <span>Enable destination</span>
+    </label>
+    {% for field in destination_fields %}
+    <label class="{% if field.input_type == 'textarea' %}full-span-field{% endif %}">
+      <span>{{ field.label }}</span>
+      {% if field.input_type == "textarea" %}
+      <textarea name="{{ field.name }}" rows="3">{{ destination.config_json.get(field.name, field.default or '') }}</textarea>
+      {% elif field.input_type == "select" %}
+      <select name="{{ field.name }}">
+        {% for option in field.enum %}
+        <option value="{{ option }}" {% if option == destination.config_json.get(field.name, field.default) %}selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+      {% elif field.input_type == "checkbox" %}
+      <input type="checkbox" name="{{ field.name }}" {% if destination.config_json.get(field.name, field.default) %}checked{% endif %} />
+      {% else %}
+      <input type="{{ field.input_type }}" name="{{ field.name }}" value="{{ destination.config_json.get(field.name, field.default or '') }}" placeholder="{{ field.placeholder }}" />
+      {% endif %}
+      <small class="subtle">{{ field.help_text }}</small>
+    </label>
+    {% endfor %}
+    </div>
+  </form>
+
+  {% if destination_secret_fields %}
+  <div class="secret-grid destination-secret-grid">
+    {% for field in destination_secret_fields %}
+    <form method="post" action="/destinations/{{ destination.id }}/secrets" class="secret-form destination-secret-card">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="secret_key" value="{{ field.name }}" />
+      <div class="section-header destination-secret-header">
+        <div>
+          <h3>{{ field.label }}</h3>
+          <p class="subtle">{{ destination_secret_state[field.name].label }}</p>
+        </div>
+      </div>
+      <label>
+        <span>New value</span>
+        <input type="password" name="secret_value" placeholder="Enter a new value" />
+        <small class="subtle">{{ field.help_text }}</small>
+      </label>
+      <div class="button-row">
+        <button type="submit" name="action" value="save">Save secret</button>
+        <button type="submit" name="action" value="clear" class="ghost-button">Clear</button>
+      </div>
+    </form>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/destinations/{{ destination.id }}/delete" class="danger-zone destination-danger-zone">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button type="submit" class="danger-button">Delete destination</button>
+  </form>
+</section>
+
+<section class="panel destination-channels-panel">
+  <div class="section-header destination-section-header">
+    <div>
+      <h2>Channels</h2>
+      <p class="subtle">Each enabled channel becomes one delivery target for this destination.</p>
+    </div>
+  </div>
+  {% if destination.channels %}
+  <div class="channel-stack">
+    {% for channel in destination.channels %}
+    <article class="channel-card destination-channel-card">
+      <form method="post" action="/destinations/{{ destination.id }}/channels/{{ channel.id }}" class="stack-form channel-edit-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <div class="section-header destination-channel-header">
+          <div>
+            <h3>{{ channel.name }}</h3>
+            <p class="subtle">{% if channel.enabled %}Enabled{% else %}Disabled{% endif %}</p>
+          </div>
+          <div class="button-row destination-channel-actions">
+            <label class="inline-toggle destination-toggle-field">
+              <input type="checkbox" name="enabled" {% if channel.enabled %}checked{% endif %} />
+              <span>Enable channel</span>
+            </label>
+            <button type="submit">Save channel</button>
+          </div>
+        </div>
+        <div class="destination-config-grid">
+        <label class="destination-name-field">
+          <span>Name</span>
+          <input type="text" name="name" value="{{ channel.name }}" />
+        </label>
+        {% for field in channel_fields %}
+        <label class="{% if field.input_type == 'textarea' %}full-span-field{% endif %}">
+          <span>{{ field.label }}</span>
+          {% if field.input_type == "textarea" %}
+          <textarea name="{{ field.name }}" rows="3">{{ channel.config_json.get(field.name, field.default or '') }}</textarea>
+          {% elif field.input_type == "select" %}
+          <select name="{{ field.name }}">
+            {% for option in field.enum %}
+            <option value="{{ option }}" {% if option == channel.config_json.get(field.name, field.default) %}selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+          </select>
+          {% elif field.input_type == "checkbox" %}
+          <input type="checkbox" name="{{ field.name }}" {% if channel.config_json.get(field.name, field.default) %}checked{% endif %} />
+          {% else %}
+          <input type="{{ field.input_type }}" name="{{ field.name }}" value="{{ channel.config_json.get(field.name, field.default or '') }}" placeholder="{{ field.placeholder }}" />
+          {% endif %}
+          <small class="subtle">{{ field.help_text }}</small>
+        </label>
+        {% endfor %}
+        </div>
+      </form>
+
+      {% if channel_secret_fields %}
+      <div class="secret-grid destination-secret-grid">
+        {% for field in channel_secret_fields %}
+        <form method="post" action="/destinations/{{ destination.id }}/channels/{{ channel.id }}/secrets" class="secret-form destination-secret-card">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <input type="hidden" name="secret_key" value="{{ field.name }}" />
+          <div class="section-header destination-secret-header">
+            <div>
+              <h3>{{ field.label }}</h3>
+              <p class="subtle">{{ channel_secret_state[channel.id][field.name].label }}</p>
+            </div>
+          </div>
+          <label>
+            <span>New value</span>
+            <input type="password" name="secret_value" placeholder="Enter a new value" />
+            <small class="subtle">{{ field.help_text }}</small>
+          </label>
+          <div class="button-row">
+            <button type="submit" name="action" value="save">Save secret</button>
+            <button type="submit" name="action" value="clear" class="ghost-button">Clear</button>
+          </div>
+        </form>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <form method="post" action="/destinations/{{ destination.id }}/channels/{{ channel.id }}/delete" class="destination-channel-delete-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button type="submit" class="ghost-button">Delete channel</button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p>No channels yet.</p>
+  {% endif %}
+</section>
+
+<section class="panel destination-add-channel-panel">
+  <div class="section-header destination-section-header destination-add-channel-header">
+    <div>
+      <h2>Add channel</h2>
+      <p class="subtle">Create another delivery target for this plugin and save it in one step.</p>
+    </div>
+    <button type="submit" form="add-channel-form">Add channel</button>
+  </div>
+  <form method="post" action="/destinations/{{ destination.id }}/channels" class="stack-form channel-create-form" id="add-channel-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="destination-config-grid">
+    <label class="destination-name-field">
+      <span>Name</span>
+      <input type="text" name="name" placeholder="General" />
+    </label>
+    <label class="inline-toggle destination-toggle-field">
+      <input type="checkbox" name="enabled" checked />
+      <span>Enable channel</span>
+    </label>
+    {% for field in channel_fields %}
+    <label class="{% if field.input_type == 'textarea' %}full-span-field{% endif %}">
+      <span>{{ field.label }}</span>
+      {% if field.input_type == "textarea" %}
+      <textarea name="{{ field.name }}" rows="3"></textarea>
+      {% elif field.input_type == "select" %}
+      <select name="{{ field.name }}">
+        {% for option in field.enum %}
+        <option value="{{ option }}" {% if option == field.default %}selected{% endif %}>{{ option }}</option>
+        {% endfor %}
+      </select>
+      {% elif field.input_type == "checkbox" %}
+      <input type="checkbox" name="{{ field.name }}" {% if field.default %}checked{% endif %} />
+      {% else %}
+      <input type="{{ field.input_type }}" name="{{ field.name }}" placeholder="{{ field.placeholder }}" />
+      {% endif %}
+      <small class="subtle">{{ field.help_text }}</small>
+    </label>
+    {% endfor %}
+    {% for field in channel_secret_fields %}
+    <label class="{% if field.input_type == 'textarea' %}full-span-field{% endif %}">
+      <span>{{ field.label }}</span>
+      <input type="password" name="{{ field.name }}" />
+      <small class="subtle">{{ field.help_text }}</small>
+    </label>
+    {% endfor %}
+    </div>
+  </form>
+</section>
+{% endblock %}

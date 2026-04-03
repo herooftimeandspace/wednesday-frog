@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <h2>Run history</h2>
+  {% if runs %}
+  <div class="history-stack">
+    {% for run in runs %}
+    <article class="run-card history-run-card">
+      <div class="section-header history-run-header">
+        <h3>Run #{{ run.id }}</h3>
+        <p class="subtle">{{ run.started_at }}</p>
+      </div>
+      {% if attempts_by_run.get(run.id) %}
+      <table class="data-table compact history-attempt-table">
+        <thead>
+          <tr>
+            <th>Attempt</th>
+            <th>Plugin</th>
+            <th>Status</th>
+            <th>Error</th>
+            <th>Response</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for attempt in attempts_by_run.get(run.id) %}
+          <tr>
+            <td>{{ attempt.id }}</td>
+            <td>{{ attempt.plugin_id or "" }}</td>
+            <td>{{ attempt.status }}</td>
+            <td>{{ attempt.error_message or "" }}</td>
+            <td>{{ attempt.response_excerpt or "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      <details class="history-details">
+        <summary>See details</summary>
+        <pre class="result-box small-box">{{ run.summary_json }}</pre>
+      </details>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p>No runs yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

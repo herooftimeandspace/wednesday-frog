@@ -1,0 +1,36 @@
+services:
+  wednesday-frog:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://wednesday_frog:changeme@postgres:5432/wednesday_frog
+      REDIS_URL: redis://redis:6379/0
+      WEDNESDAY_FROG_DISABLE_SCHEDULER: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - frog_app_data:/data
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: wednesday_frog
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: wednesday_frog
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+
+volumes:
+  frog_app_data:
+  postgres_data:

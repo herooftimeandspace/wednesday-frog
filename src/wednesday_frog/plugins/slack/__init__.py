@@ -1,0 +1,1 @@
+"""Slack plugin package."""

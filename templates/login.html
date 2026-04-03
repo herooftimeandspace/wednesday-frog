@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Login | Wednesday Frog{% endblock %}
+
+{% block content %}
+<section class="panel narrow auth-panel">
+  <div class="section-header auth-header">
+    <div>
+      <p class="eyebrow">Welcome back</p>
+      <h2>Sign in</h2>
+      <p class="subtle">Use your local Wednesday Frog account to sign in.</p>
+    </div>
+    <span class="badge auth-badge">Local account</span>
+  </div>
+  <form method="post" class="stack-form auth-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="auth-grid">
+      <label>
+        <span>Username</span>
+        <input type="text" name="username" required />
+      </label>
+      <label>
+        <span>Password</span>
+        <input type="password" name="password" required />
+      </label>
+    </div>
+    <div class="button-row auth-actions">
+      <button type="submit" class="auth-submit">Sign in</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

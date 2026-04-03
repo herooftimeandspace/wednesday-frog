@@ -1,0 +1,7 @@
+{
+  "plugin_id": "zoom",
+  "display_name": "Zoom",
+  "version": "1.0.0",
+  "description": "Send frog images to Zoom Team Chat channels.",
+  "entrypoint": "wednesday_frog.plugins.zoom.plugin:ZoomPlugin"
+}
