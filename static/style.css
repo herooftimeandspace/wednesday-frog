@@ -609,9 +609,21 @@ small {
   grid-column: span 2;
 }
 
-.user-danger-zone {
+.user-detail-footer-actions {
+  align-items: center;
+  justify-content: flex-start;
+  gap: 24px;
+  width: 100%;
+}
+
+.user-danger-zone,
+.user-inline-delete-form {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
+}
+
+.user-detail-save-button {
+  margin-left: auto;
 }
 
 .auth-panel {
@@ -938,6 +950,7 @@ code {
   .destination-channel-actions,
   .destination-detail-actions,
   .user-detail-actions,
+  .user-detail-footer-actions,
   .account-actions,
   .auth-actions {
     flex-direction: column;

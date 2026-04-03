@@ -549,6 +549,7 @@ def test_account_and_users_templates_use_compact_layout_hooks(app_config):
     account_contents = (app_config.repo_root / "templates" / "account.html").read_text()
     users_contents = (app_config.repo_root / "templates" / "users.html").read_text()
     user_detail_contents = (app_config.repo_root / "templates" / "user_detail.html").read_text()
+    base_contents = (app_config.repo_root / "templates" / "base.html").read_text()
     styles = (app_config.repo_root / "static" / "style.css").read_text()
     assert 'class="panel narrow account-panel"' in account_contents
     assert 'class="stack-form account-password-form"' in account_contents
@@ -563,11 +564,17 @@ def test_account_and_users_templates_use_compact_layout_hooks(app_config):
     assert 'class="panel narrow user-detail-panel"' in user_detail_contents
     assert 'id="user-detail-form"' in user_detail_contents
     assert 'class="user-detail-grid"' in user_detail_contents
+    assert 'class="button-row user-detail-footer-actions"' in user_detail_contents
+    assert 'id="user-delete-form"' in user_detail_contents
+    assert 'class="user-detail-save-button"' in user_detail_contents
+    assert "favicon.svg" in base_contents
     assert '.settings-timezone-field {' in styles
     assert 'flex: 1.1 1 190px;' in styles
     assert 'min-width: 0;' in styles
     assert '.settings-hour-field {' in styles
     assert 'flex: 0 0 164px;' in styles
+    assert '.user-detail-save-button {' in styles
+    assert 'gap: 24px;' in styles
     assert '.account-password-stack {' in styles
 
 

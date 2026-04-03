@@ -70,7 +70,9 @@
   - the users list should use a simpler table layout with `Username`, `Role`, and `Action` columns so the admin data aligns cleanly
   - the `/users` create-user button should sit below the description text as a full-width centered action
   - the create/edit user form should group fields into a tighter responsive grid with header-level primary actions
+  - on the edit-user screen specifically, the destructive `Delete user` action should align left while the primary `Save user` action aligns right with enough gap to avoid accidental clicks
 - The `/login` and `/setup` screens should use the same polished narrow-panel treatment as the refined account screens so the first-run and sign-in flows match the rest of the app, including visually centered auth badge text in the header bubbles.
+- The shared site chrome should include a frog emoji favicon so the app is recognizable in browser tabs.
 - Auto-disable a destination after 5 consecutive `permanent_failure` results on scheduled or manual full runs. Any successful send resets the counter.
 - Run containers as a non-root `froguser` and add an entrypoint that ensures `/data` is writable.
 - Make persistence explicit:

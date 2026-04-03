@@ -10,7 +10,6 @@
     </div>
     <div class="button-row user-detail-actions">
       <span class="badge">{{ managed_user.role }}</span>
-      <button type="submit" form="user-detail-form">Save user</button>
     </div>
   </div>
   <form method="post" action="/users/{{ managed_user.id }}" class="stack-form user-detail-form" id="user-detail-form">
@@ -61,10 +60,13 @@
   </form>
 
   {% if managed_user %}
-  <form method="post" action="/users/{{ managed_user.id }}/delete" class="danger-zone user-danger-zone">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <button type="submit" class="danger-button">Delete user</button>
-  </form>
+  <div class="button-row user-detail-footer-actions">
+    <form method="post" action="/users/{{ managed_user.id }}/delete" class="user-danger-zone user-inline-delete-form" id="user-delete-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button type="submit" class="danger-button">Delete user</button>
+    </form>
+    <button type="submit" form="user-detail-form" class="user-detail-save-button">Save user</button>
+  </div>
   {% endif %}
 </section>
 {% endblock %}
