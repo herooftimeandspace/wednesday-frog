@@ -79,7 +79,7 @@ class AppSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     timezone: Mapped[str] = mapped_column(String(128), default="UTC", nullable=False)
     schedule_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    schedule_cron: Mapped[str] = mapped_column(String(64), default="0 12 * * 3", nullable=False)
+    schedule_cron: Mapped[str] = mapped_column(String(64), default="0 12 * * wed", nullable=False)
     caption_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
     active_asset_id: Mapped[int | None] = mapped_column(ForeignKey("asset_records.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

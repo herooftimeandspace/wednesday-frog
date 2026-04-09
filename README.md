@@ -75,7 +75,7 @@ On first startup the app seeds these defaults:
 
 - Timezone: `UTC`
 - Schedule enabled: `true`
-- Cron: `0 12 * * 3`
+- Cron: `0 12 * * wed`
 
 That means Wednesday at `12:00 PM` in the configured timezone.
 

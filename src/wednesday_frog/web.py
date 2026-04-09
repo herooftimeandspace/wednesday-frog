@@ -76,7 +76,7 @@ COMMON_TIMEZONES = (
     "Australia/Sydney",
 )
 USER_ROLE_OPTIONS = (UserRole.ADMIN.value, UserRole.STANDARD.value)
-WEDNESDAY_DAY_OF_WEEK = 3
+WEDNESDAY_CRON_TOKEN = "wed"
 
 DAY_NAME_MAP = {
     0: "Sunday",
@@ -252,7 +252,7 @@ def schedule_minute_options() -> tuple[dict[str, str | int], ...]:
 
 def _cron_for_wednesday_time(hour: int, minute: int) -> str:
     """Build the internal cron expression for the fixed Wednesday cadence."""
-    return f"{minute} {hour} * * {WEDNESDAY_DAY_OF_WEEK}"
+    return f"{minute} {hour} * * {WEDNESDAY_CRON_TOKEN}"
 
 
 def _normalize_schedule_time_from_cron(cron: str) -> tuple[str, int, int]:

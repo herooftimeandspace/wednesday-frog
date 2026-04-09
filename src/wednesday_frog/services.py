@@ -39,7 +39,7 @@ from .security import PasswordManager, SecretManager
 
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_SCHEDULE_CRON = "0 12 * * 3"
+DEFAULT_SCHEDULE_CRON = "0 12 * * wed"
 DEFAULT_TIMEZONE = "UTC"
 
 

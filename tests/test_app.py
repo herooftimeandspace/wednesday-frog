@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
+from apscheduler.triggers.cron import CronTrigger
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+import wednesday_frog.services as services_module
 from wednesday_frog.assets import store_uploaded_asset
 from wednesday_frog.config import AppConfig
 from wednesday_frog.db import session_scope
@@ -81,7 +85,7 @@ def test_defaults_seed_timezone_and_schedule(app_config, session_factory):
         settings = ensure_defaults(session, app_config)
         assert settings.timezone == "UTC"
         assert settings.schedule_enabled is True
-        assert settings.schedule_cron == "0 12 * * 3"
+        assert settings.schedule_cron == "0 12 * * wed"
 
 
 def test_timezone_options_include_utc_and_common_regions():
@@ -94,9 +98,18 @@ def test_timezone_options_include_utc_and_common_regions():
 
 
 def test_schedule_summary_humanizes_default_cron():
-    assert describe_cron_schedule("0 12 * * 3", "America/Los_Angeles") == "Every Wednesday at 12:00 in America/Los Angeles"
-    assert describe_cron_schedule("15 9 * * 1", "America/Los_Angeles") == "Every Wednesday at 09:15 in America/Los Angeles"
+    assert describe_cron_schedule("0 12 * * wed", "America/Los_Angeles") == "Every Wednesday at 12:00 in America/Los Angeles"
+    assert describe_cron_schedule("15 9 * * wed", "America/Los_Angeles") == "Every Wednesday at 09:15 in America/Los Angeles"
     assert humanize_timezone_name("America/Los_Angeles") == "America/Los Angeles"
+
+
+def test_wednesday_trigger_fires_on_wednesday_not_thursday():
+    timezone = ZoneInfo("America/Los_Angeles")
+    trigger = CronTrigger.from_crontab("0 12 * * wed", timezone="America/Los_Angeles")
+    before_noon = datetime(2026, 4, 8, 0, 0, tzinfo=timezone)
+    after_noon = datetime(2026, 4, 8, 12, 1, tzinfo=timezone)
+    assert trigger.get_next_fire_time(before_noon, before_noon) == datetime(2026, 4, 8, 12, 0, tzinfo=timezone)
+    assert trigger.get_next_fire_time(after_noon, after_noon) == datetime(2026, 4, 15, 12, 0, tzinfo=timezone)
 
 
 def test_schedule_time_parser_accepts_12_and_24_hour_input():
@@ -370,8 +383,49 @@ def test_settings_manual_time_normalizes_to_wednesday_schedule(client: TestClien
     with session_scope(session_factory) as session:
         settings = session.get(AppSettings, 1)
         assert settings is not None
-        assert settings.schedule_cron == "5 21 * * 3"
+        assert settings.schedule_cron == "5 21 * * wed"
         assert settings.timezone == "America/Los_Angeles"
+
+
+def test_legacy_numeric_wednesday_schedule_is_normalized_on_startup(app_config, session_factory):
+    with session_scope(session_factory) as session:
+        settings = ensure_defaults(session, app_config)
+        settings.schedule_cron = "0 12 * * 3"
+        session.flush()
+    with TestClient(create_app(app_config)):
+        pass
+    with session_scope(session_factory) as session:
+        settings = session.get(AppSettings, 1)
+        assert settings is not None
+        assert settings.schedule_cron == "0 12 * * wed"
+
+
+def test_scheduled_slot_infers_wednesday_slot_within_grace_window(app_config, session_factory, monkeypatch):
+    with session_scope(session_factory) as session:
+        settings = ensure_defaults(session, app_config)
+        settings.timezone = "America/Los_Angeles"
+        settings.schedule_cron = "0 12 * * wed"
+        session.flush()
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(2026, 4, 8, 12, 5, tzinfo=ZoneInfo("America/Los_Angeles"))
+            return instant if tz is None else instant.astimezone(tz)
+
+    monkeypatch.setattr(services_module, "datetime", FrozenDateTime)
+    manager = DeliveryManager(
+        config=app_config,
+        session_factory=session_factory,
+        secret_manager=SecretManager(app_config.master_key),
+        plugin_manager=build_plugin_manager(app_config),
+        http_client=OutboundHttpClient(app_config),
+        metrics=MetricsCollector(),
+    )
+    with session_scope(session_factory) as session:
+        settings = session.get(AppSettings, 1)
+        assert settings is not None
+        assert manager._compute_scheduled_slot(settings) == datetime(2026, 4, 8, 19, 0, tzinfo=UTC)
 
 
 def test_validate_config_reports_missing_destination_secret(app_config, session_factory):

@@ -33,6 +33,8 @@
   - a human-readable schedule summary
   - dropdowns for hour and minute selection
   - an optional manual time input that accepts common 12-hour or 24-hour clock formats and normalizes them back into the internal Wednesday cron expression
+  - the canonical persisted Wednesday cron token should be `wed`, not numeric `3`, so APScheduler resolves the job to Wednesday instead of Thursday
+  - legacy stored schedules using `... * * 3` should be auto-normalized to `... * * wed` during normal settings load and scheduler refresh
 - Add Prometheus-compatible `GET /metrics`, but make it safe by default: require `WEDNESDAY_FROG_METRICS_TOKEN` or `_FILE`, and reject requests without the matching bearer token or `X-Metrics-Token` header. If no token is configured, `/metrics` returns `404`.
 - Expose metrics for run totals, delivery-attempt totals by plugin and status, plugin load failures, destination enabled counts, scheduler state, lock-acquisition outcomes, and fallback-asset usage.
 - Keep the existing real `/api/v1/destinations/{id}/test` behavior. Test sends hit the live delivery path and record test runs, but they do not increment the circuit-breaker failure counter.
