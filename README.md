@@ -7,6 +7,7 @@ The authoritative implementation scope for this repo lives in [IMPLEMENTATION_PL
 ## Features
 
 - Local admin setup and login
+- Success confirmations that auto-dismiss after about 15 seconds, with 15-minute idle logout protection
 - Schema-driven bundled plugin system for Slack, Teams, Mattermost, Discord, and Zoom
 - Built-in web UI for settings, assets, destinations, channels, and encrypted secrets
 - Local SQLite storage under `/data` by default, with PostgreSQL support for HA mode
@@ -98,6 +99,8 @@ The weekly cadence is fixed to Wednesday. The UI no longer exposes raw cron edit
 - `/metrics` exposes Prometheus-style metrics only when a metrics token is configured and supplied
 
 If an uploaded asset is missing or unusable, the app falls back to the bundled `wednesday-frog.png` and badges the dashboard so the admin can see that fallback mode is active.
+
+Success flashes auto-dismiss after about 15 seconds. Authenticated sessions are logged out after 15 minutes of inactivity.
 
 ## CLI
 

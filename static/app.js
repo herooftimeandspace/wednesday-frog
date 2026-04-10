@@ -1,6 +1,24 @@
-async function postJson(url, targetId) {
+function getCsrfToken() {
   const meta = document.querySelector('meta[name="csrf-token"]');
-  const token = meta ? meta.content : '';
+  return meta ? meta.content : '';
+}
+
+function timeoutLoginUrl() {
+  const value = document.body.dataset.timeoutLoginUrl;
+  return value || '/login?reason=timeout';
+}
+
+function logoutUrl() {
+  const value = document.body.dataset.logoutUrl;
+  return value || '/logout';
+}
+
+function redirectToTimeoutLogin() {
+  window.location.assign(timeoutLoginUrl());
+}
+
+async function postJson(url, targetId) {
+  const token = getCsrfToken();
   const target = document.getElementById(targetId);
   if (target) {
     target.textContent = 'Working...';
@@ -21,6 +39,10 @@ async function postJson(url, targetId) {
         body: text
       };
     }
+    if (response.status === 401 && payload && payload.reason === 'timeout') {
+      redirectToTimeoutLogin();
+      return;
+    }
     if (target) {
       target.textContent = JSON.stringify(payload, null, 2);
     }
@@ -29,6 +51,77 @@ async function postJson(url, targetId) {
       target.textContent = error.message;
     }
   }
+}
+
+function initializeEphemeralFlashes() {
+  const flashes = document.querySelectorAll('[data-auto-dismiss-ms]');
+  flashes.forEach((flash) => {
+    const timeoutMs = Number.parseInt(flash.getAttribute('data-auto-dismiss-ms') || '', 10);
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1) {
+      return;
+    }
+    window.setTimeout(() => {
+      flash.classList.add('is-dismissing');
+      window.setTimeout(() => {
+        flash.remove();
+      }, 220);
+    }, timeoutMs);
+  });
+}
+
+function initializeIdleLogout() {
+  if (document.body.dataset.authenticated !== 'true') {
+    return;
+  }
+  const idleTimeoutMs = Number.parseInt(document.body.dataset.idleTimeoutMs || '', 10);
+  if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs < 1) {
+    return;
+  }
+
+  let timerId = null;
+  let logoutPending = false;
+
+  const scheduleLogout = () => {
+    if (timerId !== null) {
+      window.clearTimeout(timerId);
+    }
+    timerId = window.setTimeout(async () => {
+      if (logoutPending) {
+        return;
+      }
+      logoutPending = true;
+      try {
+        const body = new URLSearchParams({ csrf_token: getCsrfToken() });
+        await fetch(logoutUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body
+        });
+      } catch (error) {
+        // Ignore network errors and still redirect to the timeout login page.
+      }
+      redirectToTimeoutLogin();
+    }, idleTimeoutMs);
+  };
+
+  const resetTimer = () => {
+    if (logoutPending) {
+      return;
+    }
+    scheduleLogout();
+  };
+
+  ['pointerdown', 'keydown', 'scroll', 'touchstart', 'focus'].forEach((eventName) => {
+    window.addEventListener(eventName, resetTimer, { passive: true });
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      resetTimer();
+    }
+  });
+
+  scheduleLogout();
 }
 
 document.addEventListener('click', (event) => {
@@ -71,3 +164,6 @@ document.addEventListener('change', (event) => {
   }
   form.requestSubmit();
 });
+
+initializeEphemeralFlashes();
+initializeIdleLogout();

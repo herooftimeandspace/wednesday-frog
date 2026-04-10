@@ -11,13 +11,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 import wednesday_frog.services as services_module
+import wednesday_frog.web as web_module
 from wednesday_frog.assets import store_uploaded_asset
 from wednesday_frog.config import AppConfig
 from wednesday_frog.db import session_scope
 from wednesday_frog.delivery.base import AdapterResult, ValidationIssue
 from wednesday_frog.http_client import OutboundHttpClient
 from wednesday_frog.metrics import MetricsCollector
-from wednesday_frog.models import AppSettings, AssetRecord, RunTrigger, ServiceDestination, UserRole
+from wednesday_frog.models import AppSettings, AssetRecord, DeliveryRun, RunTrigger, ServiceDestination, UserRole
 from wednesday_frog.plugins import FrogConnector, LoadedPlugin, PluginErrorContext, PluginManager, PluginSendContext, PluginValidationContext
 from wednesday_frog.security import PasswordManager, SecretManager
 from wednesday_frog.services import (
@@ -168,6 +169,41 @@ def test_setup_flow_allows_login_and_dashboard(client: TestClient):
     assert "Destination readiness" in response.text
 
 
+def test_success_flashes_auto_dismiss_and_timeout_warning_stays_persistent(client: TestClient):
+    bootstrap_admin(client)
+    dashboard = client.get("/")
+    assert dashboard.status_code == 200
+    assert "Admin account created." in dashboard.text
+    assert 'data-auto-dismiss-ms="15000"' in dashboard.text
+
+    logout_csrf = extract_csrf(dashboard.text)
+    client.post("/logout", data={"csrf_token": logout_csrf}, follow_redirects=False)
+    login_user(client, "admin", "secret-password")
+    signed_in = client.get("/")
+    assert "Signed in." in signed_in.text
+    assert 'data-auto-dismiss-ms="15000"' in signed_in.text
+
+    destinations_page = client.get("/destinations")
+    csrf = extract_csrf(destinations_page.text)
+    created = client.post(
+        "/destinations",
+        data={
+            "csrf_token": csrf,
+            "plugin_id": "slack",
+            "name": "Flash test destination",
+        },
+        follow_redirects=True,
+    )
+    assert created.status_code == 200
+    assert "Created Flash test destination." in created.text
+    assert 'data-auto-dismiss-ms="15000"' in created.text
+
+    timeout_page = client.get("/login?reason=timeout")
+    assert timeout_page.status_code == 200
+    assert "Session timed out after 15 minutes of inactivity." in timeout_page.text
+    assert 'data-auto-dismiss-ms="15000">Session timed out after 15 minutes of inactivity.' not in timeout_page.text
+
+
 def test_dashboard_renders_active_asset_preview_and_asset_route(client: TestClient):
     bootstrap_admin(client)
     response = client.get("/")
@@ -187,6 +223,81 @@ def test_every_page_footer_includes_attribution_and_kofi_widget(client: TestClie
     assert "https://storage.ko-fi.com/cdn/widget/Widget_2.js" in response.text
     assert "Support me on Ko-fi" in response.text
     assert "storage.ko-fi.com" in response.headers["content-security-policy"]
+
+
+def test_authenticated_requests_refresh_idle_timeout(client: TestClient, monkeypatch):
+    bootstrap_admin(client)
+    current = {"value": 10_000}
+    monkeypatch.setattr(web_module, "_session_timestamp", lambda: current["value"])
+
+    first = client.get("/")
+    assert first.status_code == 200
+
+    current["value"] += 600
+    second = client.get("/account", follow_redirects=False)
+    assert second.status_code == 200
+
+    current["value"] += 600
+    third = client.get("/destinations", follow_redirects=False)
+    assert third.status_code == 200
+
+
+def test_stale_session_redirects_page_requests_to_timeout_login(client: TestClient, monkeypatch):
+    bootstrap_admin(client)
+    current = {"value": 10_000}
+    monkeypatch.setattr(web_module, "_session_timestamp", lambda: current["value"])
+    client.get("/")
+
+    current["value"] += web_module.IDLE_TIMEOUT_SECONDS + 1
+    response = client.get("/account", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login?reason=timeout"
+
+    login_page = client.get("/login?reason=timeout")
+    assert login_page.status_code == 200
+    assert "Session timed out after 15 minutes of inactivity." in login_page.text
+
+
+def test_stale_session_blocks_api_requests_and_creates_no_run(client: TestClient, session_factory, monkeypatch):
+    bootstrap_admin(client)
+    current = {"value": 10_000}
+    monkeypatch.setattr(web_module, "_session_timestamp", lambda: current["value"])
+    dashboard = client.get("/")
+    csrf = extract_csrf(dashboard.text)
+
+    current["value"] += web_module.IDLE_TIMEOUT_SECONDS + 1
+    response = client.post("/api/v1/runs", headers={"X-CSRF-Token": csrf})
+    assert response.status_code == 401
+    assert response.json()["reason"] == "timeout"
+
+    with session_scope(session_factory) as session:
+        runs = list(session.scalars(select(DeliveryRun)))
+        assert runs == []
+
+
+def test_timed_out_page_post_does_not_mutate_destination_data(client: TestClient, session_factory, monkeypatch):
+    bootstrap_admin(client)
+    current = {"value": 10_000}
+    monkeypatch.setattr(web_module, "_session_timestamp", lambda: current["value"])
+    destinations_page = client.get("/destinations")
+    csrf = extract_csrf(destinations_page.text)
+
+    current["value"] += web_module.IDLE_TIMEOUT_SECONDS + 1
+    response = client.post(
+        "/destinations",
+        data={
+            "csrf_token": csrf,
+            "plugin_id": "slack",
+            "name": "Should not persist",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login?reason=timeout"
+
+    with session_scope(session_factory) as session:
+        destination = session.scalar(select(ServiceDestination).where(ServiceDestination.name == "Should not persist"))
+        assert destination is None
 
 
 def test_standard_user_is_scoped_to_own_destinations_and_blocked_from_admin_pages(client: TestClient, session_factory):
@@ -643,3 +754,18 @@ def test_login_and_setup_templates_use_auth_layout_hooks(app_config):
     assert 'class="badge auth-badge"' in setup_contents
     assert 'class="stack-form auth-form"' in setup_contents
     assert 'class="button-row auth-actions"' in setup_contents
+
+
+def test_base_template_and_app_js_expose_timeout_hooks(app_config):
+    base_contents = (app_config.repo_root / "templates" / "base.html").read_text()
+    js_contents = (app_config.repo_root / "static" / "app.js").read_text()
+    styles = (app_config.repo_root / "static" / "style.css").read_text()
+    assert 'data-authenticated="{{ \'true\' if current_user else \'false\' }}"' in base_contents
+    assert 'data-idle-timeout-ms="{{ session_idle_timeout_seconds * 1000 }}"' in base_contents
+    assert 'data-timeout-login-url="{{ timeout_login_path }}"' in base_contents
+    assert 'data-auto-dismiss-ms="{{ success_flash_timeout_ms }}"' in base_contents
+    assert "initializeEphemeralFlashes" in js_contents
+    assert "initializeIdleLogout" in js_contents
+    assert "reason === 'timeout'" in js_contents
+    assert "URLSearchParams({ csrf_token: getCsrfToken() })" in js_contents
+    assert ".flash.is-dismissing" in styles

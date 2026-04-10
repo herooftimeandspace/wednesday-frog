@@ -251,6 +251,12 @@ small {
   border-radius: 16px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.8);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.flash.is-dismissing {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .flash-success {

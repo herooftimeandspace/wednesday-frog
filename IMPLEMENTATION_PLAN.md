@@ -44,6 +44,8 @@
 - Add a strict CSP and remove inline scripts so the UI can run with a self-hosted-only policy.
 - Add a site-wide footer on every rendered page that attributes the app to `github.com/herooftimeandspace`.
 - Add the requested Ko-fi widget to the footer across all pages. Because that widget requires an external script and inline initialization, the CSP is updated narrowly to allow the Ko-fi CDN plus the required inline widget bootstrap.
+- Success flash messages should auto-dismiss after about 15 seconds, while warning and error flashes stay visible until navigation.
+- Authenticated web sessions should expire after 15 minutes of inactivity, with both client-side auto-logout and server-side idle-timeout enforcement.
 - Keep the timezone control as a full IANA timezone dropdown with `UTC` pinned first and a short common-zones section above the full list; changing the selection auto-saves settings and updates the visible schedule summary so the selected timezone is obvious to the end user.
 - Enforce a 5 MB upload cap, validate PNG/JPEG uploads, and process derivatives in a background worker before activation. If the active uploaded asset is missing, fall back to the bundled `wednesday-frog.png`, repair settings, show a dashboard warning, and badge the UI clearly when the fallback asset is active.
 - The dashboard should show the active asset as a centered image preview inside its card instead of only showing a filename. Dashboard cards should center their text and buttons to reduce the clunky layout, while the recent-runs section remains table-oriented and left-aligned.
@@ -117,6 +119,8 @@
 - Verify the `/destinations` templates use the compact list/detail layout hooks.
 - Verify the account and user-management templates use the compact admin-layout hooks.
 - Verify the login and setup templates use the refined narrow auth-panel layout hooks.
+- Verify success flashes render the auto-dismiss hook while warning and error flashes do not.
+- Verify stale authenticated sessions redirect page requests to login, reject API requests with a timeout response, and do not allow timed-out POST mutations to proceed.
 - Verify the circuit breaker disables destinations after 5 permanent failures, ignores test sends for the threshold, and resets on success.
 - Verify graceful shutdown waits for an active send to finish within the configured window and that `compose.ha.yaml`'s `stop_grace_period: 60s` is sufficient for a deliberately slowed upload test.
 - Verify `.gitignore` excludes SQLite files and local persistence directories while preserving tracked examples and documentation.

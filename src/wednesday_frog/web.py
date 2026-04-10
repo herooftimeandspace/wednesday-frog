@@ -6,6 +6,7 @@ from collections import Counter
 from contextlib import asynccontextmanager
 from functools import lru_cache
 import re
+import time
 from typing import Any
 from zoneinfo import available_timezones
 
@@ -77,6 +78,8 @@ COMMON_TIMEZONES = (
 )
 USER_ROLE_OPTIONS = (UserRole.ADMIN.value, UserRole.STANDARD.value)
 WEDNESDAY_CRON_TOKEN = "wed"
+SUCCESS_FLASH_TIMEOUT_MS = 15_000
+IDLE_TIMEOUT_SECONDS = 15 * 60
 
 DAY_NAME_MAP = {
     0: "Sunday",
@@ -123,6 +126,54 @@ def _validate_csrf(request: Request, submitted: str) -> bool:
     return bool(submitted) and submitted == request.session.get("csrf_token")
 
 
+def _session_timestamp() -> int:
+    """Return the current timestamp for idle-session tracking."""
+    return int(time.time())
+
+
+def _touch_session_activity(request: Request) -> None:
+    """Refresh the activity timestamp for an authenticated session."""
+    if request.session.get("user_id"):
+        request.session["last_activity_at"] = _session_timestamp()
+
+
+def _clear_authenticated_session(request: Request) -> None:
+    """Clear authenticated session state while preserving anonymous flash support."""
+    request.session.pop("user_id", None)
+    request.session.pop("last_activity_at", None)
+
+
+def _session_timed_out(request: Request) -> bool:
+    """Return whether the current authenticated session has exceeded the idle timeout."""
+    if not request.session.get("user_id"):
+        return False
+    last_activity_at = request.session.get("last_activity_at")
+    if not isinstance(last_activity_at, int):
+        request.session["last_activity_at"] = _session_timestamp()
+        return False
+    return _session_timestamp() - last_activity_at > IDLE_TIMEOUT_SECONDS
+
+
+def _timeout_login_path() -> str:
+    """Return the shared login redirect used for idle timeouts."""
+    return "/login?reason=timeout"
+
+
+def _timeout_page_response(request: Request) -> RedirectResponse:
+    """Clear the session and redirect a page request to the timeout login page."""
+    _clear_authenticated_session(request)
+    return _redirect(_timeout_login_path())
+
+
+def _timeout_api_response(request: Request) -> JSONResponse:
+    """Clear the session and return a timeout response for API requests."""
+    _clear_authenticated_session(request)
+    return JSONResponse(
+        {"detail": "Session timed out after 15 minutes of inactivity.", "reason": "timeout"},
+        status_code=401,
+    )
+
+
 def _current_user(session: Session, request: Request) -> AdminUser | None:
     """Return the logged-in admin, if any."""
     user_id = request.session.get("user_id")
@@ -138,17 +189,23 @@ def _redirect(location: str) -> RedirectResponse:
 
 def _require_page_user(session: Session, request: Request) -> AdminUser | RedirectResponse:
     """Ensure a page request has a logged-in admin."""
+    if _session_timed_out(request):
+        return _timeout_page_response(request)
     user = _current_user(session, request)
     if user is None:
         return _redirect("/login")
+    _touch_session_activity(request)
     return user
 
 
 def _require_api_user(session: Session, request: Request) -> AdminUser | JSONResponse:
     """Ensure an API request has a logged-in admin."""
+    if _session_timed_out(request):
+        return _timeout_api_response(request)
     user = _current_user(session, request)
     if user is None:
         return JSONResponse({"detail": "Authentication required."}, status_code=401)
+    _touch_session_activity(request)
     return user
 
 
@@ -394,6 +451,9 @@ def _template_context(
         "active_asset_url": f"/assets/{active_asset.id}",
         "fallback_asset_active": fallback_asset_active,
         "fallback_warning": fallback_warning,
+        "success_flash_timeout_ms": SUCCESS_FLASH_TIMEOUT_MS,
+        "session_idle_timeout_seconds": IDLE_TIMEOUT_SECONDS,
+        "timeout_login_path": _timeout_login_path(),
         **extra,
     }
 
@@ -501,7 +561,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             http_client.close()
 
     app = FastAPI(title="Wednesday Frog", lifespan=lifespan)
-    app.add_middleware(SessionMiddleware, secret_key=resolved_config.session_secret)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=resolved_config.session_secret,
+        max_age=IDLE_TIMEOUT_SECONDS,
+    )
     app.mount("/static", StaticFiles(directory=str(resolved_config.static_dir)), name="static")
     templates = Jinja2Templates(directory=str(resolved_config.template_dir))
     app.state.templates = templates
@@ -611,6 +675,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 return _redirect("/setup")
             admin = create_admin_user(session, username, password, app.state.password_manager)
             request.session["user_id"] = admin.id
+            _touch_session_activity(request)
             _flash(request, "Admin account created.", level="success")
             return _redirect("/")
 
@@ -619,6 +684,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         with session_scope(app.state.session_factory) as session:
             if not has_admin_user(session):
                 return _redirect("/setup")
+            if request.query_params.get("reason") == "timeout":
+                _clear_authenticated_session(request)
+                _flash(request, "Session timed out after 15 minutes of inactivity.", level="warn")
             return templates.TemplateResponse(request, "login.html", _template_context(request, session=session, config=resolved_config))
 
     @app.post("/login")
@@ -634,6 +702,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 _flash(request, "Invalid username or password.", level="error")
                 return _redirect("/login")
             request.session["user_id"] = admin.id
+            _touch_session_activity(request)
             _flash(request, "Signed in.", level="success")
             return _redirect("/")
 

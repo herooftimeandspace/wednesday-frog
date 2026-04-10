@@ -8,7 +8,12 @@
     <link rel="icon" href="{{ request.url_for('static', path='favicon.svg') }}" type="image/svg+xml" />
     <link rel="stylesheet" href="{{ request.url_for('static', path='style.css') }}" />
   </head>
-  <body>
+  <body
+    data-authenticated="{{ 'true' if current_user else 'false' }}"
+    data-idle-timeout-ms="{{ session_idle_timeout_seconds * 1000 }}"
+    data-logout-url="/logout"
+    data-timeout-login-url="{{ timeout_login_path }}"
+  >
     <div class="page-shell">
       <header class="site-header">
         <div>
@@ -44,7 +49,10 @@
       {% if flashes %}
       <section class="flash-stack">
         {% for flash in flashes %}
-        <div class="flash flash-{{ flash.level }}">{{ flash.message }}</div>
+        <div
+          class="flash flash-{{ flash.level }}{% if flash.level == 'success' %} flash-ephemeral{% endif %}"
+          {% if flash.level == 'success' %}data-auto-dismiss-ms="{{ success_flash_timeout_ms }}"{% endif %}
+        >{{ flash.message }}</div>
         {% endfor %}
       </section>
       {% endif %}
