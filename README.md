@@ -14,6 +14,7 @@ The authoritative implementation scope for this repo lives in [IMPLEMENTATION_PL
 - Encrypted secret storage with dual-key rotation support
 - Manual send, scheduled send, fallback asset protection, and per-destination test sends
 - Token-protected Prometheus-style `/metrics`
+- Security-audit friendly dependency policy with `pip-audit` in the dev toolchain
 - Docker-first deployment, plus an optional Redis + PostgreSQL HA compose profile
 
 ## Quickstart
@@ -111,6 +112,8 @@ The weekly cadence is fixed to Wednesday. The UI no longer exposes raw cron edit
 Outbound webhook/API traffic is validated against resolved IPs, pinned to the approved address for the actual connect, and does not inherit proxy settings from ambient environment variables.
 
 If an uploaded asset is missing or unusable, the app falls back to the bundled `wednesday-frog.png` and badges the dashboard so the admin can see that fallback mode is active.
+
+Uploaded assets are validated as real PNG or JPEG images based on the decoded file contents, not just the browser-reported MIME type.
 
 Success flashes auto-dismiss after about 15 seconds. Authenticated sessions are logged out after 15 minutes of inactivity.
 
@@ -260,6 +263,7 @@ Then run:
 ```bash
 wednesday-frog serve
 pytest
+pip-audit
 ```
 
 ## Health And Validation
