@@ -83,6 +83,7 @@
   - `compose.yaml` uses a persistent host mount such as `./frog_data:/data` so SQLite, uploaded assets, and file-backed bootstrap secrets survive rebuilds.
   - `compose.ha.yaml` uses a named Docker volume for PostgreSQL data and a persistent shared app-data volume for `/data` in the single-host HA example.
   - README documents that true multi-host HA requires shared read-write storage for `/data/assets` and file-backed keys across app nodes, or a later external asset-store enhancement.
+- Add a GitHub Actions `tests` workflow that installs the app and runs `pytest` on pull requests and pushes to `main`, and document that `main` should require that status check before merge through GitHub branch protection or a ruleset.
 - Set `stop_grace_period: 60s` on the app service in `compose.ha.yaml`, and document that this is required so slow in-flight uploads can finish cleanly before Docker sends `SIGKILL`.
 - Change shutdown behavior so the scheduler stops accepting new work, waits up to the configured grace window for active sends to finish, flushes final run state, and only then exits.
 - Update `.gitignore` so local runtime state is never committed: ignore SQLite files such as `*.db`, `*.sqlite*`, local persistence directories such as `data/` and `frog_data/`, and file-backed secret artifacts, while keeping example env files tracked.
@@ -126,6 +127,7 @@
 - Verify `.gitignore` excludes SQLite files and local persistence directories while preserving tracked examples and documentation.
 - Verify every page includes the footer attribution text and the Ko-fi widget markup.
 - Verify the local git remote points at the corrected GitHub repo slug.
+- Verify the GitHub Actions `tests` workflow installs the project and runs `pytest` successfully, and that it is ready to be marked required for `main`.
 
 ## Assumptions
 - This phase remains single-organization, not SaaS multi-tenant, but destinations and account activity are now partitioned per local user.
