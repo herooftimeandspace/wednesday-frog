@@ -5,6 +5,7 @@
 - Keep Python `3.12+` and evolve the app into a schema-driven, bundled-plugin platform with optional HA support rather than replacing the current stack.
 - Preserve the simple single-node Docker path, but add a supported Redis + PostgreSQL HA profile that guarantees only one scheduled Wednesday send per slot across the cluster.
 - Fold in the final hardening items: fail-safe plugin loading, token-protected metrics, dual-key secret rotation, graceful shutdown for in-flight sends, explicit persistence guidance, local plugin-dev CLI helpers, multi-user ownership, and a site-wide attribution footer.
+- Keep dependency remediation and audit automation in scope so vulnerable Python packages can be upgraded quickly and checked continuously.
 
 ## Key Changes
 - Replace hardcoded service enums, `SERVICE_SPECS`, and fixed adapter registration with a `PluginManager` that discovers bundled plugins under `src/wednesday_frog/plugins/<plugin_id>/`.
@@ -40,6 +41,7 @@
 - Keep the existing real `/api/v1/destinations/{id}/test` behavior. Test sends hit the live delivery path and record test runs, but they do not increment the circuit-breaker failure counter.
 - Add a centralized outbound HTTP layer used by every plugin. It must block loopback, private, link-local, multicast, and reserved IPs after DNS resolution unless the host or CIDR appears in `WEDNESDAY_FROG_OUTBOUND_ALLOWLIST`.
 - Harden bootstrap secret handling with `_FILE` variants, startup rejection of placeholder or shorter-than-32-character values, explicit high-memory Argon2id parameters, and redacted structured logging.
+- Keep the Python dependency floor current for security fixes, including patched `cryptography` and `Pillow` versions, and add an automated dependency-audit workflow that runs `pip-audit` in CI.
 - Make key rotation HA-safe: add `WEDNESDAY_FROG_PREVIOUS_MASTER_KEY` and `_FILE` support so decryption tries current key first and previous key second during rollout. `wednesday-frog rekey-secrets` rewrites stored secrets with the current key, after which the previous key can be removed.
 - Add a strict CSP and remove inline scripts so the UI can run with a self-hosted-only policy.
 - Add a site-wide footer on every rendered page that attributes the app to `github.com/herooftimeandspace`.
@@ -100,6 +102,7 @@
 - Verify `wednesday-frog check --emit-plugin-env <plugin_id>` prints stable placeholder env and Compose output for built-in plugins without leaking secrets.
 - Verify schema-driven admin forms render correctly, validate server-side, and preserve masked-secret behavior.
 - Verify startup rejects weak bootstrap secrets, dual-key decryption works during rotation, and `rekey-secrets` rewrites data safely.
+- Verify dependency-audit automation runs in CI and the repo installs the patched `cryptography` and `Pillow` versions required by the security baseline.
 - Verify `/metrics` returns `404` when no metrics token is configured, rejects bad tokens, and exposes Prometheus-format data when the correct token is present.
 - Verify the outbound SSRF guard blocks private and reserved targets by default and still allows explicitly allowlisted internal Mattermost hosts.
 - Verify SQLite WAL and busy-timeout behavior, PostgreSQL compatibility, and concurrent admin writes plus delivery writes.
