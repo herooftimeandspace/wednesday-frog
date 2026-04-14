@@ -187,6 +187,15 @@ def _redirect(location: str) -> RedirectResponse:
     return RedirectResponse(location, status_code=303)
 
 
+def _csp_nonce(request: Request) -> str:
+    """Return a per-request CSP nonce for inline bootstrap scripts."""
+    nonce = getattr(request.state, "csp_nonce", None)
+    if not nonce:
+        nonce = issue_csrf_token()
+        request.state.csp_nonce = nonce
+    return nonce
+
+
 def _require_page_user(session: Session, request: Request) -> AdminUser | RedirectResponse:
     """Ensure a page request has a logged-in admin."""
     if _session_timed_out(request):
@@ -454,6 +463,7 @@ def _template_context(
         "success_flash_timeout_ms": SUCCESS_FLASH_TIMEOUT_MS,
         "session_idle_timeout_seconds": IDLE_TIMEOUT_SECONDS,
         "timeout_login_path": _timeout_login_path(),
+        "csp_nonce": _csp_nonce(request),
         **extra,
     }
 
@@ -565,6 +575,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         SessionMiddleware,
         secret_key=resolved_config.session_secret,
         max_age=IDLE_TIMEOUT_SECONDS,
+        https_only=resolved_config.secure_cookies,
     )
     app.mount("/static", StaticFiles(directory=str(resolved_config.static_dir)), name="static")
     templates = Jinja2Templates(directory=str(resolved_config.template_dir))
@@ -572,10 +583,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
+        nonce = _csp_nonce(request)
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://storage.ko-fi.com; "
+            f"script-src 'self' https://storage.ko-fi.com 'nonce-{nonce}'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: https://storage.ko-fi.com https://*.ko-fi.com https://ko-fi.com; "
             "connect-src 'self' https://storage.ko-fi.com https://*.ko-fi.com https://ko-fi.com; "
@@ -588,14 +600,29 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/health/ready")
-    def health_ready():
+    def health_ready(request: Request):
         with session_scope(app.state.session_factory) as session:
             validation = validate_all_destinations(session, resolved_config, app.state.secret_manager, app.state.plugin_manager)
-        payload = {
-            "status": "ok" if validation["ok"] else "degraded",
-            "bootstrap_issues": [],
-            "validation": validation,
-        }
+            current_user = _current_user(session, request)
+        if is_admin_user(current_user):
+            payload = {
+                "status": "ok" if validation["ok"] else "degraded",
+                "bootstrap_issues": [],
+                "validation": validation,
+            }
+        else:
+            payload = {
+                "status": "ok" if validation["ok"] else "degraded",
+                "bootstrap_issues": [],
+                "validation": {
+                    "ok": validation["ok"],
+                    "issues": validation["issues"],
+                    "plugin_failure_count": len(validation["plugin_failures"]),
+                    "destination_count": len(validation["destinations"]),
+                    "destination_issue_count": sum(1 for item in validation["destinations"] if item["issues"]),
+                    "fallback_asset_active": validation["fallback_asset_active"],
+                },
+            }
         return JSONResponse(payload, status_code=200 if payload["status"] == "ok" else 503)
 
     @app.get("/metrics")
