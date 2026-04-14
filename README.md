@@ -14,6 +14,7 @@ The authoritative implementation scope for this repo lives in [IMPLEMENTATION_PL
 - Encrypted secret storage with dual-key rotation support
 - Manual send, scheduled send, fallback asset protection, and per-destination test sends
 - Token-protected Prometheus-style `/metrics`
+- Security-audit friendly dependency policy with `pip-audit` in the dev toolchain
 - Docker-first deployment, plus an optional Redis + PostgreSQL HA compose profile
 
 ## Quickstart
@@ -258,6 +259,7 @@ Then run:
 ```bash
 wednesday-frog serve
 pytest
+pip-audit
 ```
 
 ## Health And Validation
