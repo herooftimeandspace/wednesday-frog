@@ -109,6 +109,8 @@ The weekly cadence is fixed to Wednesday. The UI no longer exposes raw cron edit
 - `/history` shows recent runs and per-attempt outcomes
 - `/metrics` exposes Prometheus-style metrics only when a metrics token is configured and supplied
 
+Outbound webhook/API traffic is validated against resolved IPs, pinned to the approved address for the actual connect, and does not inherit proxy settings from ambient environment variables.
+
 If an uploaded asset is missing or unusable, the app falls back to the bundled `wednesday-frog.png` and badges the dashboard so the admin can see that fallback mode is active.
 
 Uploaded assets are validated as real PNG or JPEG images based on the decoded file contents, not just the browser-reported MIME type.
