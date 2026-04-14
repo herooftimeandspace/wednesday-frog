@@ -38,7 +38,7 @@
 - Add Prometheus-compatible `GET /metrics`, but make it safe by default: require `WEDNESDAY_FROG_METRICS_TOKEN` or `_FILE`, and reject requests without the matching bearer token or `X-Metrics-Token` header. If no token is configured, `/metrics` returns `404`.
 - Expose metrics for run totals, delivery-attempt totals by plugin and status, plugin load failures, destination enabled counts, scheduler state, lock-acquisition outcomes, and fallback-asset usage.
 - Keep the existing real `/api/v1/destinations/{id}/test` behavior. Test sends hit the live delivery path and record test runs, but they do not increment the circuit-breaker failure counter.
-- Add a centralized outbound HTTP layer used by every plugin. It must block loopback, private, link-local, multicast, and reserved IPs after DNS resolution unless the host or CIDR appears in `WEDNESDAY_FROG_OUTBOUND_ALLOWLIST`.
+- Add a centralized outbound HTTP layer used by every plugin. It must block loopback, private, link-local, multicast, and reserved IPs after DNS resolution unless the host or CIDR appears in `WEDNESDAY_FROG_OUTBOUND_ALLOWLIST`, pin outbound connections to the validated IP/hostname pair to avoid DNS rebinding gaps, and ignore ambient proxy environment variables.
 - Harden bootstrap secret handling with `_FILE` variants, startup rejection of placeholder or shorter-than-32-character values, explicit high-memory Argon2id parameters, and redacted structured logging.
 - Make key rotation HA-safe: add `WEDNESDAY_FROG_PREVIOUS_MASTER_KEY` and `_FILE` support so decryption tries current key first and previous key second during rollout. `wednesday-frog rekey-secrets` rewrites stored secrets with the current key, after which the previous key can be removed.
 - Add a strict CSP and remove inline scripts so the UI can run with a self-hosted-only policy.
@@ -102,6 +102,7 @@
 - Verify startup rejects weak bootstrap secrets, dual-key decryption works during rotation, and `rekey-secrets` rewrites data safely.
 - Verify `/metrics` returns `404` when no metrics token is configured, rejects bad tokens, and exposes Prometheus-format data when the correct token is present.
 - Verify the outbound SSRF guard blocks private and reserved targets by default and still allows explicitly allowlisted internal Mattermost hosts.
+- Verify outbound requests are sent to the validated resolved IP with the original `Host` header and TLS SNI preserved, and that proxy environment variables do not influence delivery traffic.
 - Verify SQLite WAL and busy-timeout behavior, PostgreSQL compatibility, and concurrent admin writes plus delivery writes.
 - Verify the first setup-created user becomes an admin, later created users default to standard, admins can perform full CRUD on users, and the last admin cannot be removed or demoted away.
 - Verify standard users can change their own password, cannot administer other users, and only see or mutate their own destinations, channels, secrets, test runs, and history.
