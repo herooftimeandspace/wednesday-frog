@@ -13,7 +13,7 @@ from .http_client import OutboundHttpClient
 from .metrics import MetricsCollector
 from .models import RunTrigger
 from .security import SecretManager
-from .services import DeliveryManager, build_plugin_manager, ensure_defaults, rekey_all_secrets, validate_all_destinations
+from .services import DeliveryManager, build_plugin_manager, ensure_defaults, prune_history, rekey_all_secrets, validate_all_destinations
 from .web import create_app
 
 
@@ -73,6 +73,18 @@ def _rekey() -> int:
     return 0
 
 
+def _prune_history(days: int) -> int:
+    if days < 1:
+        raise SystemExit("--days must be at least 1")
+    config = AppConfig.from_env()
+    config.ensure_runtime_dirs()
+    session_factory = create_session_factory(config)
+    with session_scope(session_factory) as session:
+        result = prune_history(session, days=days)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="wednesday-frog")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -86,6 +98,8 @@ def main() -> None:
     check_parser = subparsers.add_parser("check", help="Validate bundled plugin manifests and schema support.")
     check_parser.add_argument("--emit-plugin-env", dest="emit_plugin_env", help="Print placeholder env and Compose hints for one plugin.")
     subparsers.add_parser("rekey-secrets", help="Re-encrypt stored secrets with the active master key.")
+    prune_parser = subparsers.add_parser("prune-history", help="Delete old delivery history rows.")
+    prune_parser.add_argument("--days", type=int, required=True, help="Delete runs older than this many days.")
 
     args = parser.parse_args()
     if args.command == "serve":
@@ -99,6 +113,8 @@ def main() -> None:
         raise SystemExit(_check(args.emit_plugin_env))
     if args.command == "rekey-secrets":
         raise SystemExit(_rekey())
+    if args.command == "prune-history":
+        raise SystemExit(_prune_history(args.days))
 
 
 if __name__ == "__main__":

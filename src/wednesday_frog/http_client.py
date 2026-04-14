@@ -46,7 +46,11 @@ class OutboundHttpClient:
 
     def __init__(self, config: AppConfig) -> None:
         self._config = config
-        self._client = httpx.Client(timeout=60.0, trust_env=False)
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(connect=10.0, read=30.0, write=30.0, pool=5.0),
+            limits=httpx.Limits(max_connections=8, max_keepalive_connections=4, keepalive_expiry=15.0),
+            trust_env=False,
+        )
 
     def close(self) -> None:
         """Close the underlying client."""

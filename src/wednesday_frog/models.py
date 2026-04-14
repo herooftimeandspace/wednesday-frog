@@ -156,6 +156,18 @@ class EncryptedSecret(Base):
     channel: Mapped[DestinationChannel | None] = relationship(back_populates="secrets")
 
 
+class AppMetricCounter(Base):
+    """Persisted aggregate counters used for low-cost metrics rendering."""
+
+    __tablename__ = "app_metric_counters"
+
+    metric_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label_primary: Mapped[str] = mapped_column(String(64), primary_key=True, default="")
+    label_secondary: Mapped[str] = mapped_column(String(64), primary_key=True, default="")
+    value: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class DeliveryRun(Base):
     """One delivery run across one or more destinations."""
 

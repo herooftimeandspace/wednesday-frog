@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,8 @@ class PreparedAsset:
     filename: str
     media_type: str
     payload: bytes
+    size_bytes: int
+    source_path: Path | None = None
 
 
 @dataclass(slots=True)
@@ -41,6 +44,7 @@ class DeliveryAdapter:
     """Base class for service-specific delivery adapters."""
 
     service_type: str
+    requires_asset_for_validation = False
 
     def validate(
         self,

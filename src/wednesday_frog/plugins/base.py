@@ -89,6 +89,7 @@ class FrogConnector(ABC):
 
     plugin_id: str
     display_name: str
+    requires_asset_for_validation = False
 
     @abstractmethod
     def validate_config(self, context: PluginValidationContext) -> list[ValidationIssue]:

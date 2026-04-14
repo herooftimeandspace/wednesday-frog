@@ -11,6 +11,7 @@ class TeamsPlugin(FrogConnector):
 
     plugin_id = "teams"
     display_name = "Teams"
+    requires_asset_for_validation = True
 
     def __init__(self) -> None:
         self._adapter = TeamsAdapter()

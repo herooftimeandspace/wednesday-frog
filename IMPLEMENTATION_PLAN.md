@@ -7,6 +7,7 @@
 - Fold in the final hardening items: fail-safe plugin loading, token-protected metrics, dual-key secret rotation, graceful shutdown for in-flight sends, explicit persistence guidance, local plugin-dev CLI helpers, multi-user ownership, and a site-wide attribution footer.
 - Keep the public admin surface minimally exposed by redacting anonymous readiness output, tightening CSP around the retained Ko-fi widget, and supporting secure session cookies by configuration.
 - Keep dependency remediation and audit automation in scope so vulnerable Python packages can be upgraded quickly and checked continuously.
+- Keep the single-node SQLite path efficient on low-resource hardware by reducing duplicate asset memory copies, bounding background concurrency and outbound connection pools, tightening SQLite pragmas, and replacing history/metrics rescans with cheaper query and counter paths.
 
 ## Key Changes
 - Replace hardcoded service enums, `SERVICE_SPECS`, and fixed adapter registration with a `PluginManager` that discovers bundled plugins under `src/wednesday_frog/plugins/<plugin_id>/`.
@@ -89,6 +90,13 @@
   - README documents that true multi-host HA requires shared read-write storage for `/data/assets` and file-backed keys across app nodes, or a later external asset-store enhancement.
 - Pin container images to concrete patch tags in the Dockerfile and HA Compose example, and remove inline HA placeholder credentials in favor of environment-driven values from `.env`.
 - Add GitHub Actions workflows for `tests` and dependency audit that run on pull requests and pushes to `main`, and document that `main` should require both status checks before merge through GitHub branch protection or a ruleset.
+- Add a low-footprint runtime profile for constrained systems:
+  - keep the documented default at one web process, one scheduler, and one asset-processing worker
+  - bound the outbound HTTP pool and keepalive usage to small fixed limits
+  - use file-backed upload staging and derivative generation instead of repeated in-memory image copies
+  - make `/metrics`, history, and validation paths cheaper by favoring filtered SQL and persisted aggregate counters over broad rescans
+  - extend SQLite pragmas with conservative low-memory settings and add indexes for destination ownership, run visibility, and attempt lookups
+  - add a manual `wednesday-frog prune-history --days <n>` maintenance command for optional history cleanup on small systems
 - Set `stop_grace_period: 60s` on the app service in `compose.ha.yaml`, and document that this is required so slow in-flight uploads can finish cleanly before Docker sends `SIGKILL`.
 - Change shutdown behavior so the scheduler stops accepting new work, waits up to the configured grace window for active sends to finish, flushes final run state, and only then exits.
 - Update `.gitignore` so local runtime state is never committed: ignore SQLite files such as `*.db`, `*.sqlite*`, local persistence directories such as `data/` and `frog_data/`, and file-backed secret artifacts, while keeping example env files tracked.
@@ -139,6 +147,12 @@
 - Verify every page includes the footer attribution text and the Ko-fi widget markup.
 - Verify the local git remote points at the corrected GitHub repo slug.
 - Verify the GitHub Actions `tests` workflow installs the project and runs `pytest` successfully, the dependency-audit workflow runs `pip-audit`, and both are ready to be marked required for `main`.
+- Verify low-footprint behavior:
+  - SQLite low-memory pragmas are applied automatically
+  - outbound HTTP uses bounded connection and keepalive limits
+  - upload staging and asset processing avoid repeated full-payload memory copies
+  - validation and metrics no longer load broad history/attempt result sets into Python just to filter them
+  - `wednesday-frog prune-history --days <n>` removes only old runs and attempts while keeping referential integrity
 
 ## Assumptions
 - This phase remains single-organization, not SaaS multi-tenant, but destinations and account activity are now partitioned per local user.

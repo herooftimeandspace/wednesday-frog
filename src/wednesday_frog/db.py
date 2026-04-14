@@ -21,25 +21,32 @@ def _configure_sqlite(engine: Engine) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute("PRAGMA busy_timeout=5000;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA temp_store=FILE;")
+        cursor.execute("PRAGMA cache_size=-8192;")
+        cursor.execute("PRAGMA wal_autocheckpoint=1000;")
+        cursor.execute("PRAGMA journal_size_limit=67108864;")
         cursor.execute("PRAGMA foreign_keys=ON;")
         cursor.close()
 
 
 def create_session_factory(config: AppConfig) -> sessionmaker[Session]:
     """Create a SQLAlchemy session factory for the configured database."""
+    is_sqlite = config.database_url.startswith("sqlite")
     connect_args: dict[str, object] = {}
-    if config.database_url.startswith("sqlite"):
+    if is_sqlite:
         connect_args["check_same_thread"] = False
     engine = create_engine(
         config.database_url,
         future=True,
         connect_args=connect_args,
-        pool_pre_ping=True,
+        pool_pre_ping=not is_sqlite,
     )
-    if config.database_url.startswith("sqlite"):
+    if is_sqlite:
         _configure_sqlite(engine)
     Base.metadata.create_all(engine)
     _migrate_legacy_schema(engine)
+    _ensure_supporting_indexes(engine)
     return sessionmaker(engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
@@ -65,6 +72,23 @@ def _migrate_legacy_schema(engine: Engine) -> None:
         run_columns = {column["name"] for column in inspector.get_columns("delivery_runs")}
         if "initiated_by_user_id" not in run_columns:
             connection.execute(text("ALTER TABLE delivery_runs ADD COLUMN initiated_by_user_id INTEGER"))
+
+
+def _ensure_supporting_indexes(engine: Engine) -> None:
+    """Create indexes for the app's hottest read paths when missing."""
+    statements = (
+        "CREATE INDEX IF NOT EXISTS idx_service_destinations_owner_user_id ON service_destinations(owner_user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_destination_channels_destination_id ON destination_channels(destination_id)",
+        "CREATE INDEX IF NOT EXISTS idx_encrypted_secrets_destination_secret_key ON encrypted_secrets(destination_id, secret_key)",
+        "CREATE INDEX IF NOT EXISTS idx_encrypted_secrets_channel_secret_key ON encrypted_secrets(channel_id, secret_key)",
+        "CREATE INDEX IF NOT EXISTS idx_delivery_runs_initiated_by_user_id ON delivery_runs(initiated_by_user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_delivery_runs_started_at ON delivery_runs(started_at)",
+        "CREATE INDEX IF NOT EXISTS idx_delivery_attempts_run_id ON delivery_attempts(run_id)",
+        "CREATE INDEX IF NOT EXISTS idx_delivery_attempts_destination_id ON delivery_attempts(destination_id)",
+    )
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
 
 
 @contextmanager

@@ -11,9 +11,9 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, load_only, selectinload, sessionmaker
 
 from .assets import ensure_default_asset, load_asset_bytes, resolve_asset_path
 from .config import AppConfig
@@ -23,6 +23,7 @@ from .http_client import OutboundHttpClient
 from .metrics import MetricsCollector
 from .models import (
     AdminUser,
+    AppMetricCounter,
     AppSettings,
     AssetRecord,
     DeliveryAttempt,
@@ -41,11 +42,48 @@ from .security import PasswordManager, SecretManager
 LOGGER = logging.getLogger(__name__)
 DEFAULT_SCHEDULE_CRON = "0 12 * * wed"
 DEFAULT_TIMEZONE = "UTC"
+RUN_COUNTER_METRIC = "runs_total"
+ATTEMPT_COUNTER_METRIC = "delivery_attempts_total"
+MAX_RESPONSE_EXCERPT_LENGTH = 240
+MAX_ERROR_MESSAGE_LENGTH = 500
 
 
 def time_to_datetime() -> datetime:
     """Return an aware UTC timestamp."""
     return datetime.now(UTC)
+
+
+def _truncate_text(value: str | None, *, limit: int) -> str | None:
+    """Cap stored response and error text so history rows stay compact."""
+    if not value:
+        return value
+    if len(value) <= limit:
+        return value
+    return f"{value[: limit - 1]}…"
+
+
+def _plugin_requires_asset_for_validation(loaded_plugin) -> bool:
+    """Return whether one plugin needs an asset reference during validation."""
+    return bool(loaded_plugin and getattr(loaded_plugin.connector, "requires_asset_for_validation", False))
+
+
+def _build_prepared_asset(
+    session: Session,
+    config: AppConfig,
+    *,
+    include_payload: bool,
+) -> tuple[AppSettings, PreparedAsset, bool, str | None]:
+    """Prepare the active asset once for validation or delivery."""
+    settings, asset_record, fallback_active, fallback_warning = resolve_active_asset(session, config)
+    asset_path = resolve_asset_path(config, asset_record)
+    payload = load_asset_bytes(config, asset_record) if include_payload else b""
+    return settings, PreparedAsset(
+        filename=asset_record.original_filename,
+        media_type=asset_record.media_type,
+        payload=payload,
+        size_bytes=asset_record.size_bytes,
+        source_path=asset_path,
+    ), fallback_active, fallback_warning
 
 
 def build_plugin_manager(config: AppConfig) -> PluginManager:
@@ -75,7 +113,13 @@ def is_admin_user(user: AdminUser | None) -> bool:
 
 def list_users(session: Session) -> list[AdminUser]:
     """Return all local users."""
-    return list(session.scalars(select(AdminUser).order_by(AdminUser.username.asc())))
+    return list(
+        session.scalars(
+            select(AdminUser)
+            .options(load_only(AdminUser.id, AdminUser.username, AdminUser.role, AdminUser.created_at))
+            .order_by(AdminUser.username.asc())
+        )
+    )
 
 
 def count_admin_users(session: Session) -> int:
@@ -253,9 +297,83 @@ def rekey_all_secrets(session: Session, *, secret_manager: SecretManager) -> int
     return count
 
 
+def increment_metric_counter(
+    session: Session,
+    *,
+    metric_name: str,
+    label_primary: str = "",
+    label_secondary: str = "",
+    amount: int = 1,
+) -> None:
+    """Increment one persisted aggregate counter."""
+    counter = session.get(
+        AppMetricCounter,
+        {
+            "metric_name": metric_name,
+            "label_primary": label_primary,
+            "label_secondary": label_secondary,
+        },
+    )
+    if counter is None:
+        counter = AppMetricCounter(
+            metric_name=metric_name,
+            label_primary=label_primary,
+            label_secondary=label_secondary,
+            value=amount,
+        )
+        session.add(counter)
+    else:
+        counter.value += amount
+
+
+def list_metric_counters(session: Session, *, metric_name: str) -> list[AppMetricCounter]:
+    """Return all persisted counters for one metric family."""
+    return list(
+        session.scalars(
+            select(AppMetricCounter)
+            .options(
+                load_only(
+                    AppMetricCounter.metric_name,
+                    AppMetricCounter.label_primary,
+                    AppMetricCounter.label_secondary,
+                    AppMetricCounter.value,
+                )
+            )
+            .where(AppMetricCounter.metric_name == metric_name)
+            .order_by(AppMetricCounter.label_primary.asc(), AppMetricCounter.label_secondary.asc())
+        )
+    )
+
+
+def enabled_destination_counts(session: Session) -> dict[str, int]:
+    """Return enabled destination counts grouped by plugin id."""
+    rows = session.execute(
+        select(ServiceDestination.plugin_id, func.count(ServiceDestination.id))
+        .where(ServiceDestination.enabled.is_(True))
+        .group_by(ServiceDestination.plugin_id)
+    )
+    return {plugin_id: count for plugin_id, count in rows}
+
+
 def list_destinations(session: Session, *, user: AdminUser | None = None) -> list[ServiceDestination]:
     """Return destinations visible to the supplied user."""
-    query = select(ServiceDestination).order_by(ServiceDestination.id.asc())
+    query = (
+        select(ServiceDestination)
+        .options(
+            load_only(
+                ServiceDestination.id,
+                ServiceDestination.owner_user_id,
+                ServiceDestination.plugin_id,
+                ServiceDestination.name,
+                ServiceDestination.enabled,
+                ServiceDestination.auto_disabled_at,
+                ServiceDestination.disable_reason,
+                ServiceDestination.created_at,
+            ),
+            selectinload(ServiceDestination.owner).load_only(AdminUser.id, AdminUser.username),
+        )
+        .order_by(ServiceDestination.id.asc())
+    )
     if user is not None and not is_admin_user(user):
         query = query.where(ServiceDestination.owner_user_id == user.id)
     return list(session.scalars(query))
@@ -367,18 +485,14 @@ def validate_destination(
     destination: ServiceDestination,
     secret_manager: SecretManager,
     plugin_manager: PluginManager,
+    *,
+    prepared_asset: PreparedAsset | None = None,
 ) -> list[str]:
     """Validate one destination and return human-readable issue strings."""
     loaded = plugin_manager.get(destination.plugin_id)
     if loaded is None:
         return [f"Plugin '{destination.plugin_id}' is unavailable."]
-    _, asset_record, _, _ = resolve_active_asset(session, config)
-    asset = PreparedAsset(
-        filename=asset_record.original_filename,
-        media_type=asset_record.media_type,
-        payload=load_asset_bytes(config, asset_record),
-    )
-    context = PluginValidationContext(session=session, destination=destination, secret_manager=secret_manager, asset=asset)
+    context = PluginValidationContext(session=session, destination=destination, secret_manager=secret_manager, asset=prepared_asset)
     try:
         return [issue.message for issue in loaded.connector.validate_config(context)]
     except Exception as exc:  # noqa: BLE001
@@ -395,13 +509,37 @@ def validate_all_destinations(
     user: AdminUser | None = None,
 ) -> dict[str, Any]:
     """Return a health-style validation summary for all enabled destinations."""
-    _, asset_record, fallback_active, fallback_warning = resolve_active_asset(session, config)
+    destination_query = (
+        select(ServiceDestination)
+        .options(selectinload(ServiceDestination.channels))
+        .order_by(ServiceDestination.id.asc())
+    )
+    if user is not None and not is_admin_user(user):
+        destination_query = destination_query.where(ServiceDestination.owner_user_id == user.id)
+    destinations = list(session.scalars(destination_query))
+    _settings, asset_record, fallback_active, fallback_warning = resolve_active_asset(session, config)
+    validation_asset = None
+    if any(_plugin_requires_asset_for_validation(plugin_manager.get(destination.plugin_id)) for destination in destinations):
+        validation_asset = PreparedAsset(
+            filename=asset_record.original_filename,
+            media_type=asset_record.media_type,
+            payload=b"",
+            size_bytes=asset_record.size_bytes,
+            source_path=resolve_asset_path(config, asset_record),
+        )
     issues: list[str] = []
     if fallback_warning:
         issues.append(fallback_warning)
     results: list[dict[str, Any]] = []
-    for destination in list_destinations(session, user=user):
-        destination_issues = validate_destination(session, config, destination, secret_manager, plugin_manager)
+    for destination in destinations:
+        destination_issues = validate_destination(
+            session,
+            config,
+            destination,
+            secret_manager,
+            plugin_manager,
+            prepared_asset=validation_asset if _plugin_requires_asset_for_validation(plugin_manager.get(destination.plugin_id)) else None,
+        )
         results.append(
             {
                 "id": destination.id,
@@ -425,6 +563,7 @@ def validate_all_destinations(
 
 
 def _channel_attempts_for_validation(run_id: int, destination: ServiceDestination, channels: list[DestinationChannel], message: str) -> list[DeliveryAttempt]:
+    capped_message = _truncate_text(message, limit=MAX_ERROR_MESSAGE_LENGTH)
     attempts: list[DeliveryAttempt] = []
     if not channels:
         attempts.append(
@@ -435,7 +574,7 @@ def _channel_attempts_for_validation(run_id: int, destination: ServiceDestinatio
                 plugin_id=destination.plugin_id,
                 status="permanent_failure",
                 attempt_index=1,
-                error_message=message,
+                error_message=capped_message,
                 finished_at=time_to_datetime(),
             )
         )
@@ -449,7 +588,7 @@ def _channel_attempts_for_validation(run_id: int, destination: ServiceDestinatio
                     plugin_id=destination.plugin_id,
                     status="permanent_failure",
                     attempt_index=1,
-                    error_message=message,
+                    error_message=capped_message,
                     finished_at=time_to_datetime(),
                 )
             )
@@ -482,12 +621,7 @@ class DeliveryManager:
         self._closing = False
 
     def _prepare_asset(self, session: Session) -> tuple[AppSettings, PreparedAsset, bool, str | None]:
-        settings, asset, fallback_active, fallback_warning = resolve_active_asset(session, self._config)
-        return settings, PreparedAsset(
-            filename=asset.original_filename,
-            media_type=asset.media_type,
-            payload=load_asset_bytes(self._config, asset),
-        ), fallback_active, fallback_warning
+        return _build_prepared_asset(session, self._config, include_payload=True)
 
     def _is_retryable_error(self, error_message: str | None) -> bool:
         """Best-effort retry classifier for transport and platform throttling errors."""
@@ -504,22 +638,32 @@ class DeliveryManager:
                 result = sender()
             except httpx.TransportError as exc:
                 if attempt_index == max_attempts:
-                    return attempt_index, {"status": "retryable_failure", "error_message": str(exc), "response_excerpt": None}
+                    return attempt_index, {
+                        "status": "retryable_failure",
+                        "error_message": _truncate_text(str(exc), limit=MAX_ERROR_MESSAGE_LENGTH),
+                        "response_excerpt": None,
+                    }
                 time.sleep(attempt_index)
                 continue
             except Exception as exc:  # noqa: BLE001
                 result = error_handler(exc)
+            response_excerpt = _truncate_text(result.response_excerpt, limit=MAX_RESPONSE_EXCERPT_LENGTH)
+            error_message = _truncate_text(result.error_message, limit=MAX_ERROR_MESSAGE_LENGTH)
             if result.status == "success":
-                return attempt_index, {"status": result.status, "error_message": result.error_message, "response_excerpt": result.response_excerpt}
-            if result.status == "retryable_failure" or self._is_retryable_error(result.error_message):
+                return attempt_index, {"status": result.status, "error_message": error_message, "response_excerpt": response_excerpt}
+            if result.status == "retryable_failure" or self._is_retryable_error(error_message):
                 last_result = result
                 if attempt_index == max_attempts:
-                    return attempt_index, {"status": "retryable_failure", "error_message": result.error_message, "response_excerpt": result.response_excerpt}
+                    return attempt_index, {"status": "retryable_failure", "error_message": error_message, "response_excerpt": response_excerpt}
                 time.sleep(attempt_index)
                 continue
-            return attempt_index, {"status": result.status, "error_message": result.error_message, "response_excerpt": result.response_excerpt}
+            return attempt_index, {"status": result.status, "error_message": error_message, "response_excerpt": response_excerpt}
         assert last_result is not None
-        return max_attempts, {"status": last_result.status, "error_message": last_result.error_message, "response_excerpt": last_result.response_excerpt}
+        return max_attempts, {
+            "status": last_result.status,
+            "error_message": _truncate_text(last_result.error_message, limit=MAX_ERROR_MESSAGE_LENGTH),
+            "response_excerpt": _truncate_text(last_result.response_excerpt, limit=MAX_RESPONSE_EXCERPT_LENGTH),
+        }
 
     def _begin_run(self) -> bool:
         with self._idle_condition:
@@ -631,12 +775,14 @@ class DeliveryManager:
                 if not destinations:
                     run.status = "failed"
                     if destination_id is not None:
-                        run.error_message = "No accessible destination matched the requested id."
+                        run.error_message = _truncate_text("No accessible destination matched the requested id.", limit=MAX_ERROR_MESSAGE_LENGTH)
                     else:
-                        run.error_message = "No matching destinations are configured."
+                        run.error_message = _truncate_text("No matching destinations are configured.", limit=MAX_ERROR_MESSAGE_LENGTH)
                     run.finished_at = run.started_at
+                    increment_metric_counter(session, metric_name=RUN_COUNTER_METRIC, label_primary=run.status)
                     return {"run_id": run.id, "status": run.status, "error_message": run.error_message, "summary": {}}
                 counts: Counter[str] = Counter()
+                attempt_metric_counts: Counter[tuple[str, str]] = Counter()
                 if fallback_warning:
                     counts["fallback_asset"] += 1
                 for destination in destinations:
@@ -648,6 +794,7 @@ class DeliveryManager:
                         for attempt in attempts:
                             session.add(attempt)
                             counts[attempt.status] += 1
+                            attempt_metric_counts[(destination.plugin_id, attempt.status)] += 1
                             destination_statuses.add(attempt.status)
                         self._mark_destination_outcome(destination, destination_statuses, count_toward_breaker=trigger != RunTrigger.TEST and destination_id is None)
                         continue
@@ -667,6 +814,7 @@ class DeliveryManager:
                         for attempt in attempts:
                             session.add(attempt)
                             counts[attempt.status] += 1
+                            attempt_metric_counts[(destination.plugin_id, attempt.status)] += 1
                             destination_statuses.add(attempt.status)
                         self._mark_destination_outcome(destination, destination_statuses, count_toward_breaker=trigger != RunTrigger.TEST and destination_id is None)
                         continue
@@ -701,6 +849,7 @@ class DeliveryManager:
                         attempt.error_message = result["error_message"]
                         attempt.finished_at = time_to_datetime()
                         counts[attempt.status] += 1
+                        attempt_metric_counts[(destination.plugin_id, attempt.status)] += 1
                         destination_statuses.add(attempt.status)
                     self._mark_destination_outcome(destination, destination_statuses, count_toward_breaker=trigger != RunTrigger.TEST and destination_id is None)
 
@@ -720,6 +869,15 @@ class DeliveryManager:
                     "fallback_asset": counts["fallback_asset"],
                 }
                 run.finished_at = time_to_datetime()
+                increment_metric_counter(session, metric_name=RUN_COUNTER_METRIC, label_primary=run.status)
+                for (plugin_id, status), count in attempt_metric_counts.items():
+                    increment_metric_counter(
+                        session,
+                        metric_name=ATTEMPT_COUNTER_METRIC,
+                        label_primary=plugin_id,
+                        label_secondary=status,
+                        amount=count,
+                    )
                 return {"run_id": run.id, "status": run.status, "error_message": run.error_message, "summary": run.summary_json}
         finally:
             self._end_run()
@@ -727,19 +885,34 @@ class DeliveryManager:
 
 def list_recent_runs(session: Session, *, limit: int = 20, user: AdminUser | None = None) -> list[DeliveryRun]:
     """Return the most recent runs visible to the supplied user."""
+    query = (
+        select(DeliveryRun)
+        .options(
+            load_only(
+                DeliveryRun.id,
+                DeliveryRun.trigger_kind,
+                DeliveryRun.status,
+                DeliveryRun.initiated_by,
+                DeliveryRun.initiated_by_user_id,
+                DeliveryRun.summary_json,
+                DeliveryRun.error_message,
+                DeliveryRun.started_at,
+                DeliveryRun.finished_at,
+            )
+        )
+        .order_by(DeliveryRun.id.desc())
+        .limit(limit)
+    )
     if user is None or is_admin_user(user):
-        return list(session.scalars(select(DeliveryRun).order_by(DeliveryRun.id.desc()).limit(limit)))
-    owned_destination_ids = {destination.id for destination in list_destinations(session, user=user)}
-    visible_runs: list[DeliveryRun] = []
-    candidates = list(session.scalars(select(DeliveryRun).order_by(DeliveryRun.id.desc()).limit(limit * 10)))
-    for run in candidates:
-        if run.initiated_by_user_id == user.id:
-            visible_runs.append(run)
-        elif any(attempt.destination_id in owned_destination_ids for attempt in run.attempts):
-            visible_runs.append(run)
-        if len(visible_runs) >= limit:
-            break
-    return visible_runs
+        return list(session.scalars(query))
+    owned_destination_ids = select(ServiceDestination.id).where(ServiceDestination.owner_user_id == user.id)
+    query = query.where(
+        or_(
+            DeliveryRun.initiated_by_user_id == user.id,
+            DeliveryRun.attempts.any(DeliveryAttempt.destination_id.in_(owned_destination_ids)),
+        )
+    )
+    return list(session.scalars(query))
 
 
 def list_attempts_for_runs(
@@ -750,9 +923,62 @@ def list_attempts_for_runs(
 ) -> list[DeliveryAttempt]:
     """Return attempts for the supplied runs, scoped to the supplied user when needed."""
     run_ids = {run.id for run in runs}
-    attempts = list(session.scalars(select(DeliveryAttempt).order_by(DeliveryAttempt.id.desc()).limit(2_000)))
-    attempts = [attempt for attempt in attempts if attempt.run_id in run_ids]
+    if not run_ids:
+        return []
+    query = (
+        select(DeliveryAttempt)
+        .options(
+            load_only(
+                DeliveryAttempt.id,
+                DeliveryAttempt.run_id,
+                DeliveryAttempt.destination_id,
+                DeliveryAttempt.channel_id,
+                DeliveryAttempt.plugin_id,
+                DeliveryAttempt.status,
+                DeliveryAttempt.attempt_index,
+                DeliveryAttempt.response_excerpt,
+                DeliveryAttempt.error_message,
+                DeliveryAttempt.started_at,
+                DeliveryAttempt.finished_at,
+            )
+        )
+        .where(DeliveryAttempt.run_id.in_(run_ids))
+        .order_by(DeliveryAttempt.id.desc())
+    )
     if user is None or is_admin_user(user):
-        return attempts
-    owned_destination_ids = {destination.id for destination in list_destinations(session, user=user)}
-    return [attempt for attempt in attempts if attempt.destination_id in owned_destination_ids or attempt.run.initiated_by_user_id == user.id]
+        return list(session.scalars(query))
+    owned_destination_ids = select(ServiceDestination.id).where(ServiceDestination.owner_user_id == user.id)
+    query = query.where(
+        or_(
+            DeliveryAttempt.destination_id.in_(owned_destination_ids),
+            DeliveryAttempt.run.has(DeliveryRun.initiated_by_user_id == user.id),
+        )
+    )
+    return list(session.scalars(query))
+
+
+def prune_history(session: Session, *, days: int, batch_size: int = 500) -> dict[str, int]:
+    """Delete delivery history older than the supplied number of days."""
+    cutoff = time_to_datetime() - timedelta(days=days)
+    deleted_runs = 0
+    deleted_attempts = 0
+    while True:
+        run_ids = list(
+            session.scalars(
+                select(DeliveryRun.id)
+                .where(
+                    or_(
+                        DeliveryRun.finished_at < cutoff,
+                        DeliveryRun.finished_at.is_(None) & (DeliveryRun.started_at < cutoff),
+                    )
+                )
+                .order_by(DeliveryRun.id.asc())
+                .limit(batch_size)
+            )
+        )
+        if not run_ids:
+            break
+        deleted_attempts += session.execute(delete(DeliveryAttempt).where(DeliveryAttempt.run_id.in_(run_ids))).rowcount or 0
+        deleted_runs += session.execute(delete(DeliveryRun).where(DeliveryRun.id.in_(run_ids))).rowcount or 0
+        session.flush()
+    return {"runs_deleted": deleted_runs, "attempts_deleted": deleted_attempts}
