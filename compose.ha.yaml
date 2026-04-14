@@ -4,7 +4,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://wednesday_frog:changeme@postgres:5432/wednesday_frog
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-wednesday_frog}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-wednesday_frog}
       REDIS_URL: redis://redis:6379/0
       WEDNESDAY_FROG_DISABLE_SCHEDULER: "false"
     ports:
@@ -18,17 +18,17 @@ services:
     stop_grace_period: 60s
 
   postgres:
-    image: postgres:16
+    image: postgres:16.13
     environment:
-      POSTGRES_USER: wednesday_frog
-      POSTGRES_PASSWORD: changeme
-      POSTGRES_DB: wednesday_frog
+      POSTGRES_USER: ${POSTGRES_USER:-wednesday_frog}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-wednesday_frog}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
   redis:
-    image: redis:7
+    image: redis:7.4.8
     restart: unless-stopped
 
 volumes:

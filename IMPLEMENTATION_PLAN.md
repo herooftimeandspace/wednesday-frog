@@ -83,6 +83,7 @@
   - `compose.yaml` uses a persistent host mount such as `./frog_data:/data` so SQLite, uploaded assets, and file-backed bootstrap secrets survive rebuilds.
   - `compose.ha.yaml` uses a named Docker volume for PostgreSQL data and a persistent shared app-data volume for `/data` in the single-host HA example.
   - README documents that true multi-host HA requires shared read-write storage for `/data/assets` and file-backed keys across app nodes, or a later external asset-store enhancement.
+- Pin container images to concrete patch tags in the Dockerfile and HA Compose example, and remove inline HA placeholder credentials in favor of environment-driven values from `.env`.
 - Set `stop_grace_period: 60s` on the app service in `compose.ha.yaml`, and document that this is required so slow in-flight uploads can finish cleanly before Docker sends `SIGKILL`.
 - Change shutdown behavior so the scheduler stops accepting new work, waits up to the configured grace window for active sends to finish, flushes final run state, and only then exits.
 - Update `.gitignore` so local runtime state is never committed: ignore SQLite files such as `*.db`, `*.sqlite*`, local persistence directories such as `data/` and `frog_data/`, and file-backed secret artifacts, while keeping example env files tracked.
@@ -124,6 +125,7 @@
 - Verify the circuit breaker disables destinations after 5 permanent failures, ignores test sends for the threshold, and resets on success.
 - Verify graceful shutdown waits for an active send to finish within the configured window and that `compose.ha.yaml`'s `stop_grace_period: 60s` is sufficient for a deliberately slowed upload test.
 - Verify `.gitignore` excludes SQLite files and local persistence directories while preserving tracked examples and documentation.
+- Verify deployment files no longer use floating image tags or inline `changeme` HA credentials.
 - Verify every page includes the footer attribution text and the Ko-fi widget markup.
 - Verify the local git remote points at the corrected GitHub repo slug.
 
