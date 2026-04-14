@@ -13,7 +13,7 @@ import shutil
 import tempfile
 import uuid
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session, sessionmaker
 
 from .config import AppConfig
@@ -22,6 +22,10 @@ from .models import AssetRecord
 
 LOGGER = logging.getLogger(__name__)
 ALLOWED_MEDIA_TYPES = {"image/png", "image/jpeg"}
+ALLOWED_IMAGE_FORMATS = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+}
 MAX_UPLOAD_BYTES = 5_000_000
 
 
@@ -37,10 +41,19 @@ def validate_image_bytes(payload: bytes, media_type: str) -> tuple[int, int]:
         raise ValueError("Only PNG and JPEG images are supported.")
     if len(payload) > MAX_UPLOAD_BYTES:
         raise ValueError("Uploads must be 5 MB or smaller.")
-    with Image.open(io.BytesIO(payload)) as image:
-        image.verify()
-    with Image.open(io.BytesIO(payload)) as image:
-        return image.size
+    try:
+        with Image.open(io.BytesIO(payload), formats=tuple(ALLOWED_IMAGE_FORMATS)) as image:
+            actual_format = image.format
+            if actual_format not in ALLOWED_IMAGE_FORMATS:
+                raise ValueError("Only PNG and JPEG images are supported.")
+            actual_media_type = ALLOWED_IMAGE_FORMATS[actual_format]
+            if actual_media_type != media_type:
+                raise ValueError("Uploaded file contents do not match the selected image type.")
+            image.verify()
+        with Image.open(io.BytesIO(payload), formats=(actual_format,)) as image:
+            return image.size
+    except UnidentifiedImageError as exc:
+        raise ValueError("Only valid PNG and JPEG images are supported.") from exc
 
 
 def _final_extension(media_type: str) -> str:
@@ -87,8 +100,7 @@ def create_pending_asset(
     media_type: str,
 ) -> AssetRecord:
     """Stage an uploaded asset for background processing."""
-    if len(payload) > MAX_UPLOAD_BYTES:
-        raise ValueError("Uploads must be 5 MB or smaller.")
+    validate_image_bytes(payload, media_type)
     temp_name = f"{uuid.uuid4().hex}.upload"
     (config.assets_dir / temp_name).write_bytes(payload)
     asset = AssetRecord(

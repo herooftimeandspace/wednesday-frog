@@ -100,6 +100,8 @@ The weekly cadence is fixed to Wednesday. The UI no longer exposes raw cron edit
 
 If an uploaded asset is missing or unusable, the app falls back to the bundled `wednesday-frog.png` and badges the dashboard so the admin can see that fallback mode is active.
 
+Uploaded assets are validated as real PNG or JPEG images based on the decoded file contents, not just the browser-reported MIME type.
+
 Success flashes auto-dismiss after about 15 seconds. Authenticated sessions are logged out after 15 minutes of inactivity.
 
 ## CLI
