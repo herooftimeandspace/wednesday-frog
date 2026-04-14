@@ -14,6 +14,7 @@ The authoritative implementation scope for this repo lives in [IMPLEMENTATION_PL
 - Encrypted secret storage with dual-key rotation support
 - Manual send, scheduled send, fallback asset protection, and per-destination test sends
 - Token-protected Prometheus-style `/metrics`
+- Security-audit friendly dependency policy with `pip-audit` in the dev toolchain
 - Docker-first deployment, plus an optional Redis + PostgreSQL HA compose profile
 
 ## Quickstart
@@ -48,10 +49,13 @@ These are the app-owned runtime settings outside the database:
 - `WEDNESDAY_FROG_OUTBOUND_ALLOWLIST`
 - `WEDNESDAY_FROG_DISABLE_SCHEDULER`
 - `WEDNESDAY_FROG_SHUTDOWN_GRACE_SECONDS`
+- `WEDNESDAY_FROG_SECURE_COOKIES`
 - `TZ`
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` when using `compose.ha.yaml`
 
 The app refuses to start if the master key, session secret, or setup token are missing, still use the placeholder values from `.env.example`, or are shorter than 32 characters.
+
+`WEDNESDAY_FROG_SECURE_COOKIES` defaults to secure-only session cookies. Set it to `false` only for local plain-HTTP development.
 
 ## Persistence And Backups
 
@@ -111,7 +115,11 @@ The weekly cadence is fixed to Wednesday. The UI no longer exposes raw cron edit
 - `/history` shows recent runs and per-attempt outcomes
 - `/metrics` exposes Prometheus-style metrics only when a metrics token is configured and supplied
 
+Outbound webhook/API traffic is validated against resolved IPs, pinned to the approved address for the actual connect, and does not inherit proxy settings from ambient environment variables.
+
 If an uploaded asset is missing or unusable, the app falls back to the bundled `wednesday-frog.png` and badges the dashboard so the admin can see that fallback mode is active.
+
+Uploaded assets are validated as real PNG or JPEG images based on the decoded file contents, not just the browser-reported MIME type.
 
 Success flashes auto-dismiss after about 15 seconds. Authenticated sessions are logged out after 15 minutes of inactivity.
 
@@ -262,12 +270,13 @@ Then run:
 ```bash
 wednesday-frog serve
 pytest
+pip-audit
 ```
 
 ## Health And Validation
 
 - `GET /health/live` reports process liveness.
-- `GET /health/ready` validates bootstrap config, plugin load health, fallback asset state, and destination readiness.
+- `GET /health/ready` validates bootstrap config, plugin load health, fallback asset state, and destination readiness, but only returns a redacted summary to anonymous callers.
 - `GET /api/v1/config/validate` returns the current validation report from the authenticated admin session.
 - `GET /metrics` returns Prometheus-style metrics only when the configured metrics token is supplied.
 

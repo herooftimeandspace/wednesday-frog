@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi.testclient import TestClient
+import httpx
+import pytest
 from sqlalchemy import select
 
 import wednesday_frog.services as services_module
+import wednesday_frog.http_client as http_client_module
 import wednesday_frog.web as web_module
 from wednesday_frog.assets import store_uploaded_asset
 from wednesday_frog.config import AppConfig
@@ -131,6 +135,7 @@ def test_from_env_prefers_working_directory_for_app_root(monkeypatch, app_config
     assert config.template_dir.is_dir()
     assert config.static_dir.is_dir()
     assert config.bundled_asset_path.is_file()
+    assert config.secure_cookies is True
 
 
 def test_secret_storage_round_trips_and_masks(app_config, session_factory):
@@ -222,7 +227,36 @@ def test_every_page_footer_includes_attribution_and_kofi_widget(client: TestClie
     assert "github.com/herooftimeandspace created this app." in response.text
     assert "https://storage.ko-fi.com/cdn/widget/Widget_2.js" in response.text
     assert "Support me on Ko-fi" in response.text
-    assert "storage.ko-fi.com" in response.headers["content-security-policy"]
+    csp = response.headers["content-security-policy"]
+    assert "storage.ko-fi.com" in csp
+    assert "script-src 'self' https://storage.ko-fi.com 'nonce-" in csp
+    assert "<script nonce=" in response.text
+
+
+def test_health_ready_redacts_validation_for_anonymous_callers(client: TestClient):
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["validation"]["destination_count"] == 0
+    assert "destinations" not in payload["validation"]
+    assert "plugin_failure_count" in payload["validation"]
+
+
+def test_health_ready_returns_full_validation_for_admin_sessions(client: TestClient):
+    bootstrap_admin(client)
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "destinations" in payload["validation"]
+    assert "plugin_failures" in payload["validation"]
+
+
+def test_secure_cookie_mode_marks_session_cookie_secure(app_config):
+    secure_config = replace(app_config, secure_cookies=True)
+    with TestClient(create_app(secure_config)) as secure_client:
+        response = secure_client.get("/setup")
+    assert response.status_code == 200
+    assert "secure" in response.headers["set-cookie"].lower()
 
 
 def test_authenticated_requests_refresh_idle_timeout(client: TestClient, monkeypatch):
@@ -472,6 +506,34 @@ def test_settings_upload_creates_pending_asset(client: TestClient, app_config, s
         assert any(asset.processing_status in {"pending", "ready", "failed"} for asset in assets)
 
 
+def test_settings_upload_rejects_mismatched_browser_mime(client: TestClient, app_config, session_factory):
+    bootstrap_admin(client)
+    settings_page = client.get("/settings")
+    csrf = extract_csrf(settings_page.text)
+    payload = (app_config.repo_root / "wednesday-frog.png").read_bytes()
+    response = client.post(
+        "/settings",
+        data={
+            "csrf_token": csrf,
+            "timezone": "UTC",
+            "schedule_hour": "12",
+            "schedule_minute": "0",
+            "schedule_time_text": "12:00",
+            "schedule_enabled": "on",
+            "caption_text": "",
+            "asset_id": "1",
+        },
+        files={"asset_file": ("frog-copy.png", payload, "image/jpeg")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    follow = client.get("/settings")
+    assert "Uploaded file contents do not match the selected image type." in follow.text
+    with session_scope(session_factory) as session:
+        assets = list(session.query(AssetRecord).all())
+        assert len(assets) == 1
+
+
 def test_settings_manual_time_normalizes_to_wednesday_schedule(client: TestClient, session_factory):
     bootstrap_admin(client)
     settings_page = client.get("/settings")
@@ -559,6 +621,59 @@ def test_metrics_requires_token(client: TestClient):
     ok = client.get("/metrics", headers={"X-Metrics-Token": "metrics-token-which-is-definitely-32"})
     assert ok.status_code == 200
     assert "wednesday_frog_plugin_failures" in ok.text
+
+
+def test_outbound_http_client_pins_validated_ip_host_header_and_sni(app_config, monkeypatch):
+    client = OutboundHttpClient(app_config)
+    captured: dict[str, object] = {}
+
+    def fake_getaddrinfo(host, port, type=None):  # type: ignore[no-untyped-def]
+        assert host == "hooks.example.com"
+        return [(2, 1, 6, "", ("93.184.216.34", port))]
+
+    def fake_send(request, **kwargs):  # type: ignore[no-untyped-def]
+        captured["request"] = request
+        return httpx.Response(200, request=request, text="ok")
+
+    monkeypatch.setattr(http_client_module.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(client._client, "send", fake_send)
+    response = client.post("https://hooks.example.com/api/send?token=demo")
+    request = captured["request"]
+
+    assert response.status_code == 200
+    assert request.url.host == "93.184.216.34"
+    assert request.url.path == "/api/send"
+    assert request.url.query == b"token=demo"
+    assert request.headers["host"] == "hooks.example.com"
+    assert request.extensions["sni_hostname"] == "hooks.example.com"
+    assert client._client._trust_env is False
+
+
+def test_outbound_http_client_blocks_private_resolution_without_allowlist(app_config, monkeypatch):
+    client = OutboundHttpClient(app_config)
+
+    def fake_getaddrinfo(host, port, type=None):  # type: ignore[no-untyped-def]
+        return [(2, 1, 6, "", ("10.0.0.8", port))]
+
+    monkeypatch.setattr(http_client_module.socket, "getaddrinfo", fake_getaddrinfo)
+    with pytest.raises(http_client_module.OutboundTargetBlocked):
+        client.post("https://chat.internal.example/webhook")
+
+
+def test_outbound_http_client_allows_allowlisted_private_host(app_config, monkeypatch):
+    config = replace(app_config, outbound_allowlist=("chat.internal.example",))
+    client = OutboundHttpClient(config)
+
+    def fake_getaddrinfo(host, port, type=None):  # type: ignore[no-untyped-def]
+        return [(2, 1, 6, "", ("10.0.0.8", port))]
+
+    def fake_send(request, **kwargs):  # type: ignore[no-untyped-def]
+        return httpx.Response(200, request=request, text="ok")
+
+    monkeypatch.setattr(http_client_module.socket, "getaddrinfo", fake_getaddrinfo)
+    monkeypatch.setattr(client._client, "send", fake_send)
+    response = client.post("https://chat.internal.example/webhook")
+    assert response.status_code == 200
 
 
 def test_check_report_emits_plugin_env(app_config):
@@ -776,6 +891,7 @@ def test_base_template_and_app_js_expose_timeout_hooks(app_config):
     assert 'data-idle-timeout-ms="{{ session_idle_timeout_seconds * 1000 }}"' in base_contents
     assert 'data-timeout-login-url="{{ timeout_login_path }}"' in base_contents
     assert 'data-auto-dismiss-ms="{{ success_flash_timeout_ms }}"' in base_contents
+    assert 'nonce="{{ csp_nonce }}"' in base_contents
     assert "initializeEphemeralFlashes" in js_contents
     assert "initializeIdleLogout" in js_contents
     assert "reason === 'timeout'" in js_contents

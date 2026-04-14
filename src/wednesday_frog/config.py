@@ -92,6 +92,7 @@ class AppConfig:
     metrics_token: str | None
     timezone_env: str
     scheduler_disabled: bool
+    secure_cookies: bool
     redis_url: str | None
     outbound_allowlist: tuple[str, ...]
     shutdown_grace_seconds: int
@@ -143,6 +144,7 @@ class AppConfig:
             metrics_token=metrics_token,
             timezone_env=os.getenv("TZ", "UTC"),
             scheduler_disabled=_to_bool(os.getenv("WEDNESDAY_FROG_DISABLE_SCHEDULER"), default=False),
+            secure_cookies=_to_bool(os.getenv("WEDNESDAY_FROG_SECURE_COOKIES"), default=True),
             redis_url=os.getenv("WEDNESDAY_FROG_REDIS_URL") or os.getenv("REDIS_URL"),
             outbound_allowlist=_split_csv(os.getenv("WEDNESDAY_FROG_OUTBOUND_ALLOWLIST")),
             shutdown_grace_seconds=max(int(os.getenv("WEDNESDAY_FROG_SHUTDOWN_GRACE_SECONDS", "60")), 1),
