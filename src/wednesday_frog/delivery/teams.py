@@ -16,6 +16,7 @@ class TeamsAdapter(DeliveryAdapter):
     """Send Adaptive Card webhooks to Teams."""
 
     service_type = "teams"
+    requires_asset_for_validation = True
 
     def validate(
         self,
@@ -34,7 +35,7 @@ class TeamsAdapter(DeliveryAdapter):
                 issues.append(ValidationIssue("error", f"Teams channel '{channel.name}' is missing a webhook URL."))
         if asset is not None:
             try:
-                build_teams_data_uri(asset.payload, asset.media_type)
+                build_teams_data_uri(asset)
             except ValueError as exc:
                 issues.append(ValidationIssue("error", str(exc)))
         return issues
@@ -53,7 +54,7 @@ class TeamsAdapter(DeliveryAdapter):
         if not webhook_url:
             return AdapterResult(status="permanent_failure", error_message="Missing Teams webhook URL.")
         try:
-            data_uri = build_teams_data_uri(asset.payload, asset.media_type)
+            data_uri = build_teams_data_uri(asset)
         except ValueError as exc:
             return AdapterResult(status="permanent_failure", error_message=str(exc))
         card_text = caption or "Wednesday Frog"

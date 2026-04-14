@@ -1,8 +1,6 @@
 """FastAPI application for Wednesday Frog."""
 
 from __future__ import annotations
-
-from collections import Counter
 from contextlib import asynccontextmanager
 from functools import lru_cache
 import re
@@ -18,13 +16,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from .assets import AssetProcessor, create_pending_asset, guess_media_type, resolve_asset_path
+from .assets import AssetProcessor, create_pending_asset_from_upload, guess_media_type, resolve_asset_path
 from .config import AppConfig
 from .db import create_session_factory, session_scope
 from .http_client import OutboundHttpClient
 from .logging_utils import configure_logging
 from .metrics import MetricsCollector, render_metric_lines
-from .models import AdminUser, AssetRecord, DeliveryAttempt, DestinationChannel, RunTrigger, ServiceDestination, UserRole
+from .models import AdminUser, AssetRecord, DeliveryAttempt, DestinationChannel, RunTrigger, UserRole
 from .plugins import LoadedPlugin, render_schema_fields
 from .scheduler import SchedulerService
 from .security import PasswordManager, SecretManager, issue_csrf_token
@@ -42,6 +40,7 @@ from .services import (
     delete_channel,
     delete_destination,
     describe_secret_state,
+    enabled_destination_counts,
     ensure_defaults,
     get_channel_for_user,
     get_destination_for_user,
@@ -52,6 +51,7 @@ from .services import (
     is_admin_user,
     list_attempts_for_runs,
     list_destinations,
+    list_metric_counters,
     list_recent_runs,
     list_users,
     rekey_all_secrets,
@@ -500,22 +500,25 @@ def _render_metrics(app: FastAPI) -> str:
     lines: list[str] = []
     snapshot = app.state.metrics.snapshot()
     with session_scope(app.state.session_factory) as session:
-        validation = validate_all_destinations(session, app.state.config, app.state.secret_manager, app.state.plugin_manager)
-        runs = list_recent_runs(session, limit=500)
-        attempts = list(session.scalars(select(DeliveryAttempt).order_by(DeliveryAttempt.id.desc()).limit(2_000)))
-        destinations = list(session.scalars(select(ServiceDestination).order_by(ServiceDestination.id.asc())))
-    run_counts = Counter(run.status for run in runs)
-    for status, count in sorted(run_counts.items()):
-        lines.append(render_metric_lines("wednesday_frog_runs_total", count, {"status": status}))
-    attempt_counts = Counter((attempt.plugin_id or "unknown", attempt.status) for attempt in attempts)
-    for (plugin_id, status), count in sorted(attempt_counts.items()):
-        lines.append(render_metric_lines("wednesday_frog_delivery_attempts_total", count, {"plugin_id": plugin_id, "status": status}))
+        _settings, _asset, fallback_active, _warning = resolve_active_asset(session, app.state.config)
+        run_counters = list_metric_counters(session, metric_name="runs_total")
+        attempt_counters = list_metric_counters(session, metric_name="delivery_attempts_total")
+        enabled_counts = enabled_destination_counts(session)
+    for counter in run_counters:
+        lines.append(render_metric_lines("wednesday_frog_runs_total", counter.value, {"status": counter.label_primary}))
+    for counter in attempt_counters:
+        lines.append(
+            render_metric_lines(
+                "wednesday_frog_delivery_attempts_total",
+                counter.value,
+                {"plugin_id": counter.label_primary or "unknown", "status": counter.label_secondary},
+            )
+        )
     lines.append(render_metric_lines("wednesday_frog_plugin_failures", len(app.state.plugin_manager.failures())))
-    enabled_counts = Counter(destination.plugin_id for destination in destinations if destination.enabled)
     for plugin_id, count in sorted(enabled_counts.items()):
         lines.append(render_metric_lines("wednesday_frog_enabled_destinations", count, {"plugin_id": plugin_id}))
     lines.append(render_metric_lines("wednesday_frog_scheduler_enabled", 0 if app.state.config.scheduler_disabled else 1))
-    lines.append(render_metric_lines("wednesday_frog_fallback_asset_active", 1 if validation["fallback_asset_active"] else 0))
+    lines.append(render_metric_lines("wednesday_frog_fallback_asset_active", 1 if fallback_active else 0))
     for outcome, count in sorted(snapshot["lock_outcomes"].items()):
         lines.append(render_metric_lines("wednesday_frog_schedule_lock_total", count, {"outcome": outcome}))
     return "\n".join(lines) + "\n"
@@ -968,19 +971,20 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             chosen_asset_id = str(form.get("asset_id", "")).strip()
             asset_file = form.get("asset_file")
             if asset_file and getattr(asset_file, "filename", ""):
-                payload = await asset_file.read()
                 media_type = asset_file.content_type or guess_media_type(asset_file.filename or "")
                 try:
-                    pending_asset = create_pending_asset(
+                    pending_asset = create_pending_asset_from_upload(
                         session,
                         resolved_config,
                         filename=asset_file.filename,
-                        payload=payload,
+                        upload_file=asset_file.file,
                         media_type=media_type,
                     )
                 except ValueError as exc:
+                    await asset_file.close()
                     _flash(request, str(exc), level="error")
                     return _redirect("/settings")
+                await asset_file.close()
                 app.state.asset_processor.queue(pending_asset.id)
                 _flash(request, "Uploaded image queued for background processing. Activate it after it becomes ready.", level="success")
             elif chosen_asset_id:

@@ -2,6 +2,8 @@ FROM python:3.12.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+ENV MALLOC_ARENA_MAX=2
 
 WORKDIR /app
 
@@ -14,7 +16,7 @@ COPY static ./static
 COPY wednesday-frog.png ./wednesday-frog.png
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN python -m pip install --upgrade pip && python -m pip install . && chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN python -m pip install --upgrade pip && python -m pip install --no-cache-dir . && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p /data && chown -R froguser:froguser /app /data
 

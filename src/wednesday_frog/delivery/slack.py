@@ -53,7 +53,7 @@ class SlackAdapter(DeliveryAdapter):
         begin = http_client.post(
             "https://slack.com/api/files.getUploadURLExternal",
             headers=headers,
-            data={"filename": asset.filename, "length": str(len(asset.payload))},
+            data={"filename": asset.filename, "length": str(asset.size_bytes)},
             timeout=30.0,
         )
         begin.raise_for_status()
