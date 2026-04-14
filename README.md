@@ -73,6 +73,16 @@ volumes:
 
 The repo ignores local database files and persistence directories via `.gitignore`, including `*.db`, `*.sqlite*`, `data/`, and `frog_data/`.
 
+## CI And Pull Requests
+
+GitHub Actions runs the `tests` workflow on pull requests and on pushes to `main`. That workflow installs the project with dev dependencies and runs:
+
+```bash
+pytest -q
+```
+
+To make that check block merges, configure GitHub branch protection or a ruleset for `main` and mark the `tests` status check as required.
+
 ## Default Schedule
 
 On first startup the app seeds these defaults:
