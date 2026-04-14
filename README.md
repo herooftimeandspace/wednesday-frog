@@ -35,6 +35,28 @@ docker compose up --build
 
 The checked-in Docker definitions use pinned image patch tags, and the HA Compose example expects PostgreSQL credentials to come from `.env` instead of inline placeholder secrets.
 
+## Low-Resource Profile
+
+For older or resource-constrained systems, the lightest supported profile is:
+
+- SQLite with the default `/data/wednesday_frog.db`
+- one app process
+- one scheduler
+- one asset worker
+- bounded outbound HTTP connection pools
+
+The app now biases disk-backed work over repeated in-memory copies for uploads, keeps HTTP connection limits intentionally small, and renders `/metrics` from persisted counters instead of rescanning run history tables.
+
+The Docker image also sets:
+
+```bash
+MALLOC_ARENA_MAX=2
+```
+
+That helps keep glibc heap arena growth more disciplined on smaller hosts.
+
+For low-footprint deployments, keep health and metrics scrapes conservative rather than high-frequency.
+
 ## Bootstrap Environment Variables
 
 These are the app-owned runtime settings outside the database:
@@ -141,11 +163,13 @@ wednesday-frog run-now
 wednesday-frog validate-config
 wednesday-frog check
 wednesday-frog check --emit-plugin-env slack
+wednesday-frog prune-history --days 30
 wednesday-frog rekey-secrets
 ```
 
 - `check` validates bundled plugin manifests, imports, and supported JSON Schema usage.
 - `check --emit-plugin-env <plugin_id>` prints placeholder env and Compose hints for local plugin testing.
+- `prune-history --days <n>` removes old delivery runs and attempts when you want to reclaim space on smaller systems.
 - `rekey-secrets` rewrites stored encrypted secrets with the current master key. During rotation you can keep the old key available through `WEDNESDAY_FROG_PREVIOUS_MASTER_KEY` until every node has restarted.
 
 ## Plugin Model

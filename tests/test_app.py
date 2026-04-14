@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import io
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -11,18 +12,18 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi.testclient import TestClient
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select, text
 
 import wednesday_frog.services as services_module
 import wednesday_frog.http_client as http_client_module
 import wednesday_frog.web as web_module
-from wednesday_frog.assets import store_uploaded_asset
+from wednesday_frog.assets import create_pending_asset_from_upload, store_uploaded_asset
 from wednesday_frog.config import AppConfig
 from wednesday_frog.db import session_scope
 from wednesday_frog.delivery.base import AdapterResult, ValidationIssue
 from wednesday_frog.http_client import OutboundHttpClient
 from wednesday_frog.metrics import MetricsCollector
-from wednesday_frog.models import AppSettings, AssetRecord, DeliveryRun, RunTrigger, ServiceDestination, UserRole
+from wednesday_frog.models import AppMetricCounter, AppSettings, AssetRecord, DeliveryAttempt, DeliveryRun, RunTrigger, ServiceDestination, UserRole
 from wednesday_frog.plugins import FrogConnector, LoadedPlugin, PluginErrorContext, PluginManager, PluginSendContext, PluginValidationContext
 from wednesday_frog.security import PasswordManager, SecretManager
 from wednesday_frog.services import (
@@ -36,6 +37,7 @@ from wednesday_frog.services import (
     ensure_defaults,
     get_user_by_username,
     get_secret_value,
+    prune_history,
     resolve_active_asset,
     set_secret_value,
     validate_all_destinations,
@@ -621,6 +623,143 @@ def test_metrics_requires_token(client: TestClient):
     ok = client.get("/metrics", headers={"X-Metrics-Token": "metrics-token-which-is-definitely-32"})
     assert ok.status_code == 200
     assert "wednesday_frog_plugin_failures" in ok.text
+
+
+def test_sqlite_low_resource_pragmas_are_applied(session_factory):
+    with session_scope(session_factory) as session:
+        assert session.execute(text("PRAGMA journal_mode;")).scalar_one().lower() == "wal"
+        assert session.execute(text("PRAGMA busy_timeout;")).scalar_one() == 5000
+        assert session.execute(text("PRAGMA synchronous;")).scalar_one() == 1
+        assert session.execute(text("PRAGMA temp_store;")).scalar_one() == 1
+        assert session.execute(text("PRAGMA cache_size;")).scalar_one() == -8192
+        assert session.execute(text("PRAGMA wal_autocheckpoint;")).scalar_one() == 1000
+        assert session.execute(text("PRAGMA journal_size_limit;")).scalar_one() == 67_108_864
+
+
+def test_outbound_http_client_uses_low_resource_connection_limits(app_config):
+    client = OutboundHttpClient(app_config)
+    try:
+        assert client._client.timeout.connect == 10.0
+        assert client._client.timeout.pool == 5.0
+        assert client._client.timeout.read == 30.0
+        assert client._client.timeout.write == 30.0
+        assert client._client._transport._pool._max_connections == 8
+        assert client._client._transport._pool._max_keepalive_connections == 4
+        assert client._client._transport._pool._keepalive_expiry == 15.0
+    finally:
+        client.close()
+
+
+def test_app_uses_single_asset_worker_by_default(client: TestClient):
+    assert client.app.state.asset_processor._executor._max_workers == 1
+
+
+def test_create_pending_asset_from_upload_streams_in_chunks(app_config, session_factory):
+    class ChunkAwareUpload(io.BytesIO):
+        def __init__(self, payload: bytes):
+            super().__init__(payload)
+            self.read_sizes: list[int] = []
+
+        def read(self, size: int = -1) -> bytes:
+            self.read_sizes.append(size)
+            return super().read(size)
+
+    payload = app_config.bundled_asset_path.read_bytes()
+    upload = ChunkAwareUpload(payload)
+    with session_scope(session_factory) as session:
+        asset = create_pending_asset_from_upload(
+            session,
+            app_config,
+            filename="streamed.png",
+            upload_file=upload,
+            media_type="image/png",
+        )
+        assert asset.processing_status == "pending"
+        assert asset.size_bytes == len(payload)
+        assert len(asset.sha256) == 64
+        assert any(size == 64 * 1024 for size in upload.read_sizes)
+        assert all(size != -1 for size in upload.read_sizes[:-1])
+
+
+def test_validate_all_destinations_skips_asset_bytes_for_non_asset_validation_plugins(app_config, session_factory, monkeypatch):
+    secret_manager = SecretManager(app_config.master_key)
+    plugin_manager = build_plugin_manager(app_config)
+    with session_scope(session_factory) as session:
+        ensure_defaults(session, app_config)
+        owner = seed_user(session)
+        destination = create_destination(session, owner=owner, plugin_id="slack", name="Slack validation")
+        add_channel(session, destination, name="general", enabled=True, config_values={"channel_id": "C123"})
+        monkeypatch.setattr(
+            services_module,
+            "load_asset_bytes",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("asset bytes should not be loaded")),
+        )
+        validation = validate_all_destinations(session, app_config, secret_manager, plugin_manager)
+        slack_result = next(item for item in validation["destinations"] if item["id"] == destination.id)
+    assert any("bot token" in issue.lower() for issue in slack_result["issues"])
+
+
+def test_metrics_use_persisted_counters_not_history_scans(client: TestClient):
+    bootstrap_admin(client)
+    plugin_manager = client.app.state.plugin_manager
+    slack_manifest = plugin_manager.get("slack").manifest  # type: ignore[union-attr]
+    plugin_manager._plugins["slack"] = LoadedPlugin(manifest=slack_manifest, connector=PassingPlugin())
+
+    with session_scope(client.app.state.session_factory) as session:
+        owner = get_user_by_username(session, "admin")
+        assert owner is not None
+        destination = create_destination(session, owner=owner, plugin_id="slack", name="Metrics slack")
+        add_channel(session, destination, name="general", enabled=True, config_values={"channel_id": "C123"})
+
+    result = client.app.state.delivery_manager.run(trigger=RunTrigger.TEST, initiated_by="pytest")
+    assert result["status"] == "succeeded"
+
+    with session_scope(client.app.state.session_factory) as session:
+        assert session.scalar(select(AppMetricCounter).where(AppMetricCounter.metric_name == "runs_total")) is not None
+        session.execute(delete(DeliveryAttempt))
+        session.execute(delete(DeliveryRun))
+
+    metrics = client.get("/metrics", headers={"X-Metrics-Token": "metrics-token-which-is-definitely-32"})
+    assert metrics.status_code == 200
+    assert 'wednesday_frog_runs_total{status="succeeded"} 1' in metrics.text
+    assert 'wednesday_frog_delivery_attempts_total{plugin_id="slack",status="success"} 1' in metrics.text
+
+
+def test_prune_history_removes_only_old_runs_and_attempts(app_config, session_factory):
+    now = datetime.now(UTC)
+    with session_scope(session_factory) as session:
+        old_run = DeliveryRun(
+            trigger_kind=RunTrigger.MANUAL.value,
+            status="failed",
+            summary_json={},
+            started_at=now - timedelta(days=10),
+            finished_at=now - timedelta(days=10),
+        )
+        new_run = DeliveryRun(
+            trigger_kind=RunTrigger.MANUAL.value,
+            status="succeeded",
+            summary_json={},
+            started_at=now - timedelta(days=1),
+            finished_at=now - timedelta(days=1),
+        )
+        session.add_all([old_run, new_run])
+        session.flush()
+        session.add_all(
+            [
+                DeliveryAttempt(run_id=old_run.id, status="permanent_failure", started_at=old_run.started_at, finished_at=old_run.finished_at),
+                DeliveryAttempt(run_id=new_run.id, status="success", started_at=new_run.started_at, finished_at=new_run.finished_at),
+            ]
+        )
+        session.flush()
+        result = prune_history(session, days=7)
+        assert result == {"runs_deleted": 1, "attempts_deleted": 1}
+
+    with session_scope(session_factory) as session:
+        remaining_runs = {run.id for run in session.scalars(select(DeliveryRun))}
+        remaining_attempts = {attempt.run_id for attempt in session.scalars(select(DeliveryAttempt))}
+        assert old_run.id not in remaining_runs
+        assert new_run.id in remaining_runs
+        assert remaining_attempts == {new_run.id}
 
 
 def test_outbound_http_client_pins_validated_ip_host_header_and_sni(app_config, monkeypatch):
