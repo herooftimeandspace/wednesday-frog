@@ -79,13 +79,21 @@ The repo ignores local database files and persistence directories via `.gitignor
 
 ## CI And Pull Requests
 
-GitHub Actions runs the `tests` workflow on pull requests and on pushes to `main`. That workflow installs the project with dev dependencies and runs:
+GitHub Actions runs both the `tests` and `Security Audit` workflows on pull requests and on pushes to `main`.
+
+The `tests` workflow installs the project with dev dependencies and runs:
 
 ```bash
 pytest -q
 ```
 
-To make that check block merges, configure GitHub branch protection or a ruleset for `main` and mark the `tests` status check as required.
+The `Security Audit` workflow audits the resolved dependency set with:
+
+```bash
+pip-audit
+```
+
+To make those checks block merges, configure GitHub branch protection or a ruleset for `main` and mark both the `tests` and `pip-audit` status checks as required.
 
 ## Default Schedule
 
@@ -285,6 +293,4 @@ pip-audit
 - Secrets are encrypted at rest and never shown again in plaintext after save.
 - Third-party service secrets are stored in the database, not in `.env`.
 - Test sends are real API calls and do not contribute to the circuit-breaker auto-disable threshold.
-- The repo slug still uses the historical typo `wednedsay-frog`; the product name and package name are `wednesday-frog`.
-
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/B0B615LXDL)

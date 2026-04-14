@@ -41,4 +41,4 @@ That command validates manifests, imports, and supported JSON Schema usage, and 
 - Keep secrets out of source control.
 - Keep runtime databases, `/data` contents, and file-backed secret files out of commits.
 - Preserve the plan-first workflow so the code, UI, tests, and docs stay aligned.
-- Keep the GitHub Actions `tests` workflow green. It is intended to be marked as a required status check for `main`.
+- Keep the GitHub Actions `tests` and `Security Audit` workflows green. They are intended to be marked as required status checks for `main`.
