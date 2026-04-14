@@ -472,6 +472,34 @@ def test_settings_upload_creates_pending_asset(client: TestClient, app_config, s
         assert any(asset.processing_status in {"pending", "ready", "failed"} for asset in assets)
 
 
+def test_settings_upload_rejects_mismatched_browser_mime(client: TestClient, app_config, session_factory):
+    bootstrap_admin(client)
+    settings_page = client.get("/settings")
+    csrf = extract_csrf(settings_page.text)
+    payload = (app_config.repo_root / "wednesday-frog.png").read_bytes()
+    response = client.post(
+        "/settings",
+        data={
+            "csrf_token": csrf,
+            "timezone": "UTC",
+            "schedule_hour": "12",
+            "schedule_minute": "0",
+            "schedule_time_text": "12:00",
+            "schedule_enabled": "on",
+            "caption_text": "",
+            "asset_id": "1",
+        },
+        files={"asset_file": ("frog-copy.png", payload, "image/jpeg")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    follow = client.get("/settings")
+    assert "Uploaded file contents do not match the selected image type." in follow.text
+    with session_scope(session_factory) as session:
+        assets = list(session.query(AssetRecord).all())
+        assert len(assets) == 1
+
+
 def test_settings_manual_time_normalizes_to_wednesday_schedule(client: TestClient, session_factory):
     bootstrap_admin(client)
     settings_page = client.get("/settings")

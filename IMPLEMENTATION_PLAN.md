@@ -49,7 +49,7 @@
 - Success flash messages should auto-dismiss after about 15 seconds, while warning and error flashes stay visible until navigation.
 - Authenticated web sessions should expire after 15 minutes of inactivity, with both client-side auto-logout and server-side idle-timeout enforcement.
 - Keep the timezone control as a full IANA timezone dropdown with `UTC` pinned first and a short common-zones section above the full list; changing the selection auto-saves settings and updates the visible schedule summary so the selected timezone is obvious to the end user.
-- Enforce a 5 MB upload cap, validate PNG/JPEG uploads, and process derivatives in a background worker before activation. If the active uploaded asset is missing, fall back to the bundled `wednesday-frog.png`, repair settings, show a dashboard warning, and badge the UI clearly when the fallback asset is active.
+- Enforce a 5 MB upload cap, validate the actual decoded PNG/JPEG image format instead of trusting browser MIME alone, reject format/mime mismatches, and process derivatives in a background worker before activation. If the active uploaded asset is missing, fall back to the bundled `wednesday-frog.png`, repair settings, show a dashboard warning, and badge the UI clearly when the fallback asset is active.
 - The dashboard should show the active asset as a centered image preview inside its card instead of only showing a filename. Dashboard cards should center their text and buttons to reduce the clunky layout, while the recent-runs section remains table-oriented and left-aligned.
 - The dashboard manual-send result box should use a cleaner, more compact status-panel treatment so it feels less clunky without changing the existing theme or the richer history/test result views elsewhere.
 - The dashboard configuration-validation mini-cards should use a denser layout with tighter spacing and more compact card sizing so the section feels less bulky while keeping the same information.
@@ -112,6 +112,7 @@
 - Verify HA scheduling by running two app instances against the same Postgres and Redis services and confirming only one scheduled send is recorded and delivered for a given slot.
 - Verify the settings UI no longer exposes editable raw cron, only Wednesday time controls, and that valid manual inputs such as `9:05`, `09:05`, `9:05 am`, and `21:05` normalize to the expected internal Wednesday schedule.
 - Verify uploads enforce the 5 MB cap, background processing transitions assets through `pending|ready|failed`, missing assets fall back cleanly to the bundled frog, and the dashboard badges fallback mode.
+- Verify uploads with mismatched browser MIME and decoded image format are rejected before they are staged or activated.
 - Verify the dashboard renders an authenticated active-asset preview image and centered card layout without changing the left-aligned recent-runs table.
 - Verify the dashboard manual-send result box uses the compact dashboard-specific styling hook.
 - Verify the dashboard configuration-validation section uses the denser dashboard-specific card styling hook.
