@@ -34,6 +34,7 @@ def app_config(tmp_path: Path) -> AppConfig:
         metrics_token="metrics-token-which-is-definitely-32",
         timezone_env="UTC",
         scheduler_disabled=True,
+        secure_cookies=False,
         redis_url=None,
         outbound_allowlist=(),
         shutdown_grace_seconds=60,

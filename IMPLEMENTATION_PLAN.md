@@ -5,6 +5,7 @@
 - Keep Python `3.12+` and evolve the app into a schema-driven, bundled-plugin platform with optional HA support rather than replacing the current stack.
 - Preserve the simple single-node Docker path, but add a supported Redis + PostgreSQL HA profile that guarantees only one scheduled Wednesday send per slot across the cluster.
 - Fold in the final hardening items: fail-safe plugin loading, token-protected metrics, dual-key secret rotation, graceful shutdown for in-flight sends, explicit persistence guidance, local plugin-dev CLI helpers, multi-user ownership, and a site-wide attribution footer.
+- Keep the public admin surface minimally exposed by redacting anonymous readiness output, tightening CSP around the retained Ko-fi widget, and supporting secure session cookies by configuration.
 
 ## Key Changes
 - Replace hardcoded service enums, `SERVICE_SPECS`, and fixed adapter registration with a `PluginManager` that discovers bundled plugins under `src/wednesday_frog/plugins/<plugin_id>/`.
@@ -41,11 +42,12 @@
 - Add a centralized outbound HTTP layer used by every plugin. It must block loopback, private, link-local, multicast, and reserved IPs after DNS resolution unless the host or CIDR appears in `WEDNESDAY_FROG_OUTBOUND_ALLOWLIST`.
 - Harden bootstrap secret handling with `_FILE` variants, startup rejection of placeholder or shorter-than-32-character values, explicit high-memory Argon2id parameters, and redacted structured logging.
 - Make key rotation HA-safe: add `WEDNESDAY_FROG_PREVIOUS_MASTER_KEY` and `_FILE` support so decryption tries current key first and previous key second during rollout. `wednesday-frog rekey-secrets` rewrites stored secrets with the current key, after which the previous key can be removed.
-- Add a strict CSP and remove inline scripts so the UI can run with a self-hosted-only policy.
+- Add a stricter CSP and use a per-request script nonce for the retained Ko-fi widget bootstrap instead of allowing blanket inline script execution.
 - Add a site-wide footer on every rendered page that attributes the app to `github.com/herooftimeandspace`.
 - Add the requested Ko-fi widget to the footer across all pages. Because that widget requires an external script and inline initialization, the CSP is updated narrowly to allow the Ko-fi CDN plus the required inline widget bootstrap.
 - Success flash messages should auto-dismiss after about 15 seconds, while warning and error flashes stay visible until navigation.
 - Authenticated web sessions should expire after 15 minutes of inactivity, with both client-side auto-logout and server-side idle-timeout enforcement.
+- Add a secure-cookie configuration switch so production can require `Secure` session cookies while local plain-HTTP development can opt out explicitly.
 - Keep the timezone control as a full IANA timezone dropdown with `UTC` pinned first and a short common-zones section above the full list; changing the selection auto-saves settings and updates the visible schedule summary so the selected timezone is obvious to the end user.
 - Enforce a 5 MB upload cap, validate PNG/JPEG uploads, and process derivatives in a background worker before activation. If the active uploaded asset is missing, fall back to the bundled `wednesday-frog.png`, repair settings, show a dashboard warning, and badge the UI clearly when the fallback asset is active.
 - The dashboard should show the active asset as a centered image preview inside its card instead of only showing a filename. Dashboard cards should center their text and buttons to reduce the clunky layout, while the recent-runs section remains table-oriented and left-aligned.
@@ -101,6 +103,7 @@
 - Verify schema-driven admin forms render correctly, validate server-side, and preserve masked-secret behavior.
 - Verify startup rejects weak bootstrap secrets, dual-key decryption works during rotation, and `rekey-secrets` rewrites data safely.
 - Verify `/metrics` returns `404` when no metrics token is configured, rejects bad tokens, and exposes Prometheus-format data when the correct token is present.
+- Verify `/health/ready` returns a redacted summary to anonymous callers while detailed validation remains in the authenticated validation API.
 - Verify the outbound SSRF guard blocks private and reserved targets by default and still allows explicitly allowlisted internal Mattermost hosts.
 - Verify SQLite WAL and busy-timeout behavior, PostgreSQL compatibility, and concurrent admin writes plus delivery writes.
 - Verify the first setup-created user becomes an admin, later created users default to standard, admins can perform full CRUD on users, and the last admin cannot be removed or demoted away.
@@ -121,6 +124,7 @@
 - Verify the login and setup templates use the refined narrow auth-panel layout hooks.
 - Verify success flashes render the auto-dismiss hook while warning and error flashes do not.
 - Verify stale authenticated sessions redirect page requests to login, reject API requests with a timeout response, and do not allow timed-out POST mutations to proceed.
+- Verify page responses include a CSP nonce and no longer rely on blanket `script-src 'unsafe-inline'`, while the retained Ko-fi widget still receives the nonce it needs to bootstrap.
 - Verify the circuit breaker disables destinations after 5 permanent failures, ignores test sends for the threshold, and resets on success.
 - Verify graceful shutdown waits for an active send to finish within the configured window and that `compose.ha.yaml`'s `stop_grace_period: 60s` is sufficient for a deliberately slowed upload test.
 - Verify `.gitignore` excludes SQLite files and local persistence directories while preserving tracked examples and documentation.

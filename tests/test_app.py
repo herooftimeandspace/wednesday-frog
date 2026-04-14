@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -131,6 +132,7 @@ def test_from_env_prefers_working_directory_for_app_root(monkeypatch, app_config
     assert config.template_dir.is_dir()
     assert config.static_dir.is_dir()
     assert config.bundled_asset_path.is_file()
+    assert config.secure_cookies is True
 
 
 def test_secret_storage_round_trips_and_masks(app_config, session_factory):
@@ -222,7 +224,36 @@ def test_every_page_footer_includes_attribution_and_kofi_widget(client: TestClie
     assert "github.com/herooftimeandspace created this app." in response.text
     assert "https://storage.ko-fi.com/cdn/widget/Widget_2.js" in response.text
     assert "Support me on Ko-fi" in response.text
-    assert "storage.ko-fi.com" in response.headers["content-security-policy"]
+    csp = response.headers["content-security-policy"]
+    assert "storage.ko-fi.com" in csp
+    assert "script-src 'self' https://storage.ko-fi.com 'nonce-" in csp
+    assert "<script nonce=" in response.text
+
+
+def test_health_ready_redacts_validation_for_anonymous_callers(client: TestClient):
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["validation"]["destination_count"] == 0
+    assert "destinations" not in payload["validation"]
+    assert "plugin_failure_count" in payload["validation"]
+
+
+def test_health_ready_returns_full_validation_for_admin_sessions(client: TestClient):
+    bootstrap_admin(client)
+    response = client.get("/health/ready")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "destinations" in payload["validation"]
+    assert "plugin_failures" in payload["validation"]
+
+
+def test_secure_cookie_mode_marks_session_cookie_secure(app_config):
+    secure_config = replace(app_config, secure_cookies=True)
+    with TestClient(create_app(secure_config)) as secure_client:
+        response = secure_client.get("/setup")
+    assert response.status_code == 200
+    assert "secure" in response.headers["set-cookie"].lower()
 
 
 def test_authenticated_requests_refresh_idle_timeout(client: TestClient, monkeypatch):
@@ -764,6 +795,7 @@ def test_base_template_and_app_js_expose_timeout_hooks(app_config):
     assert 'data-idle-timeout-ms="{{ session_idle_timeout_seconds * 1000 }}"' in base_contents
     assert 'data-timeout-login-url="{{ timeout_login_path }}"' in base_contents
     assert 'data-auto-dismiss-ms="{{ success_flash_timeout_ms }}"' in base_contents
+    assert 'nonce="{{ csp_nonce }}"' in base_contents
     assert "initializeEphemeralFlashes" in js_contents
     assert "initializeIdleLogout" in js_contents
     assert "reason === 'timeout'" in js_contents

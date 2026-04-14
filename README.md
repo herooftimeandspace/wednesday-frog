@@ -46,9 +46,12 @@ These are the app-owned runtime settings outside the database:
 - `WEDNESDAY_FROG_OUTBOUND_ALLOWLIST`
 - `WEDNESDAY_FROG_DISABLE_SCHEDULER`
 - `WEDNESDAY_FROG_SHUTDOWN_GRACE_SECONDS`
+- `WEDNESDAY_FROG_SECURE_COOKIES`
 - `TZ`
 
 The app refuses to start if the master key, session secret, or setup token are missing, still use the placeholder values from `.env.example`, or are shorter than 32 characters.
+
+`WEDNESDAY_FROG_SECURE_COOKIES` defaults to secure-only session cookies. Set it to `false` only for local plain-HTTP development.
 
 ## Persistence And Backups
 
@@ -253,7 +256,7 @@ pytest
 ## Health And Validation
 
 - `GET /health/live` reports process liveness.
-- `GET /health/ready` validates bootstrap config, plugin load health, fallback asset state, and destination readiness.
+- `GET /health/ready` validates bootstrap config, plugin load health, fallback asset state, and destination readiness, but only returns a redacted summary to anonymous callers.
 - `GET /api/v1/config/validate` returns the current validation report from the authenticated admin session.
 - `GET /metrics` returns Prometheus-style metrics only when the configured metrics token is supplied.
 
