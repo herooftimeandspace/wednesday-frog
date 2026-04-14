@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from .assets import AssetProcessor, create_pending_asset, resolve_asset_path
+from .assets import AssetProcessor, create_pending_asset, guess_media_type, resolve_asset_path
 from .config import AppConfig
 from .db import create_session_factory, session_scope
 from .http_client import OutboundHttpClient
@@ -969,7 +969,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             asset_file = form.get("asset_file")
             if asset_file and getattr(asset_file, "filename", ""):
                 payload = await asset_file.read()
-                media_type = asset_file.content_type or "image/png"
+                media_type = asset_file.content_type or guess_media_type(asset_file.filename or "")
                 try:
                     pending_asset = create_pending_asset(
                         session,
