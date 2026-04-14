@@ -33,6 +33,8 @@ docker compose up --build
 
 `compose.yaml` persists the SQLite database, uploaded assets, and file-backed secrets in `./frog_data:/data`.
 
+The checked-in Docker definitions use pinned image patch tags, and the HA Compose example expects PostgreSQL credentials to come from `.env` instead of inline placeholder secrets.
+
 ## Bootstrap Environment Variables
 
 These are the app-owned runtime settings outside the database:
@@ -49,6 +51,7 @@ These are the app-owned runtime settings outside the database:
 - `WEDNESDAY_FROG_SHUTDOWN_GRACE_SECONDS`
 - `WEDNESDAY_FROG_SECURE_COOKIES`
 - `TZ`
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` when using `compose.ha.yaml`
 
 The app refuses to start if the master key, session secret, or setup token are missing, still use the placeholder values from `.env.example`, or are shorter than 32 characters.
 
@@ -239,6 +242,7 @@ That profile:
 
 - stores PostgreSQL data in a named Docker volume
 - stores app data in a persistent `/data` volume
+- reads PostgreSQL credentials from `.env` instead of inline placeholder values
 - sets `stop_grace_period: 60s` so slow in-flight uploads have time to finish
 
 HA mode is active only when both PostgreSQL and Redis are configured. The scheduler uses Redis locking plus a database uniqueness constraint on `(trigger_kind, scheduled_slot)` to prevent duplicate scheduled sends.

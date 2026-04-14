@@ -754,6 +754,18 @@ def test_governance_docs_reference_the_plan(app_config):
     assert "*.db" in gitignore
 
 
+def test_deployment_files_pin_images_and_avoid_inline_ha_passwords(app_config):
+    dockerfile = (app_config.repo_root / "Dockerfile").read_text()
+    compose_ha = (app_config.repo_root / "compose.ha.yaml").read_text()
+    env_example = (app_config.repo_root / ".env.example").read_text()
+    assert "FROM python:3.12.12-slim-bookworm" in dockerfile
+    assert "image: postgres:16.13" in compose_ha
+    assert "image: redis:7.4.8" in compose_ha
+    assert "changeme" not in compose_ha
+    assert "${POSTGRES_PASSWORD" in compose_ha
+    assert "POSTGRES_PASSWORD" in env_example
+
+
 def test_templates_do_not_use_inline_click_handlers(app_config):
     for path in (
         app_config.repo_root / "templates" / "dashboard.html",
