@@ -2,6 +2,7 @@
 
 ## Summary
 - `IMPLEMENTATION_PLAN.md` remains the source of truth and must be updated before any plan-affecting code change.
+- No implementation work should be done directly on `main`; changes start on a feature branch, land as small incremental commits, and merge back through a tested pull request.
 - Keep Python `3.12+` and evolve the app into a schema-driven, bundled-plugin platform with optional HA support rather than replacing the current stack.
 - Preserve the simple single-node Docker path, but add a supported Redis + PostgreSQL HA profile that guarantees only one scheduled Wednesday send per slot across the cluster.
 - Fold in the final hardening items: fail-safe plugin loading, token-protected metrics, dual-key secret rotation, graceful shutdown for in-flight sends, explicit persistence guidance, local plugin-dev CLI helpers, multi-user ownership, and a site-wide attribution footer.
@@ -90,6 +91,11 @@
   - README documents that true multi-host HA requires shared read-write storage for `/data/assets` and file-backed keys across app nodes, or a later external asset-store enhancement.
 - Pin container images to concrete patch tags in the Dockerfile and HA Compose example, and remove inline HA placeholder credentials in favor of environment-driven values from `.env`.
 - Add GitHub Actions workflows for `tests` and dependency audit that run on pull requests and pushes to `main`, and document that `main` should require both status checks before merge through GitHub branch protection or a ruleset.
+- Keep the repo workflow branch-first by default:
+  - create a feature branch before making changes
+  - commit in small logical increments on that branch
+  - run the relevant test suite before opening or updating the PR
+  - merge through a pull request instead of pushing implementation changes directly to `main`
 - Add a low-footprint runtime profile for constrained systems:
   - keep the documented default at one web process, one scheduler, and one asset-processing worker
   - bound the outbound HTTP pool and keepalive usage to small fixed limits
