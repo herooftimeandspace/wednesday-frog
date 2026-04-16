@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import time
 
 from sqlalchemy.orm import Session
@@ -57,10 +58,11 @@ class ZoomAdapter(DeliveryAdapter):
         account_id = destination.config_json.get("account_id", "")
         client_id = destination.config_json.get("client_id", "")
         client_secret = get_secret_value(session, destination=destination, secret_key="client_secret", secret_manager=secret_manager)
+        basic_token = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
         token_response = http_client.post(
             "https://zoom.us/oauth/token",
             params={"grant_type": "account_credentials", "account_id": account_id},
-            auth=(client_id, client_secret),
+            headers={"Authorization": f"Basic {basic_token}"},
             timeout=30.0,
         )
         token_response.raise_for_status()
