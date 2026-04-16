@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -20,7 +21,8 @@ import wednesday_frog.web as web_module
 from wednesday_frog.assets import create_pending_asset_from_upload, store_uploaded_asset
 from wednesday_frog.config import AppConfig
 from wednesday_frog.db import session_scope
-from wednesday_frog.delivery.base import AdapterResult, ValidationIssue
+from wednesday_frog.delivery.base import AdapterResult, PreparedAsset, ValidationIssue
+from wednesday_frog.delivery.zoom import ZoomAdapter
 from wednesday_frog.http_client import OutboundHttpClient
 from wednesday_frog.metrics import MetricsCollector
 from wednesday_frog.models import AppMetricCounter, AppSettings, AssetRecord, DeliveryAttempt, DeliveryRun, RunTrigger, ServiceDestination, UserRole
@@ -813,6 +815,120 @@ def test_outbound_http_client_allows_allowlisted_private_host(app_config, monkey
     monkeypatch.setattr(client._client, "send", fake_send)
     response = client.post("https://chat.internal.example/webhook")
     assert response.status_code == 200
+
+
+def test_zoom_token_request_uses_basic_authorization_header(app_config, session_factory):
+    secret_manager = SecretManager(app_config.master_key)
+    adapter = ZoomAdapter()
+
+    class FakeHttpClient:
+        def __init__(self):
+            self.calls: list[dict[str, object]] = []
+
+        def post(self, url, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls.append({"url": url, "kwargs": kwargs})
+            if url == "https://zoom.us/oauth/token":
+                request = httpx.Request("POST", url, headers=kwargs.get("headers"))
+                return httpx.Response(200, request=request, json={"access_token": "zoom-token", "expires_in": 3600})
+            request = httpx.Request("POST", url, headers=kwargs.get("headers"))
+            return httpx.Response(200, request=request, json={"id": "message-123"})
+
+    fake_http = FakeHttpClient()
+    asset = PreparedAsset(filename="frog.png", media_type="image/png", payload=b"frog-bytes", size_bytes=10)
+
+    with session_scope(session_factory) as session:
+        ensure_defaults(session, app_config)
+        owner = seed_user(session)
+        destination = create_destination(session, owner=owner, plugin_id="zoom", name="Zoom test")
+        destination.config_json = {"account_id": "acct-123", "client_id": "client-abc", "sender_user_id": "me"}
+        channel = add_channel(session, destination, name="general", enabled=True, config_values={"channel_id": "channel-42"})
+        set_secret_value(
+            session,
+            secret_manager=secret_manager,
+            destination=destination,
+            secret_key="client_secret",
+            label="Client secret",
+            value="secret-xyz",
+        )
+        result = adapter.send_image(session, destination, channel, asset, "", secret_manager, fake_http)  # type: ignore[arg-type]
+
+    assert result.status == "success"
+    assert len(fake_http.calls) == 2
+    token_call = fake_http.calls[0]
+    expected = base64.b64encode(b"client-abc:secret-xyz").decode("ascii")
+    assert token_call["url"] == "https://zoom.us/oauth/token"
+    assert token_call["kwargs"]["headers"]["Authorization"] == f"Basic {expected}"  # type: ignore[index]
+    assert "auth" not in token_call["kwargs"]  # type: ignore[operator]
+    assert token_call["kwargs"]["params"] == {"grant_type": "account_credentials", "account_id": "acct-123"}  # type: ignore[index]
+    file_call = fake_http.calls[1]
+    assert file_call["url"] == "https://file.zoom.us/v2/chat/users/me/messages/files"
+
+
+def test_zoom_token_acquisition_uses_cache_until_expiry(app_config, session_factory):
+    secret_manager = SecretManager(app_config.master_key)
+    adapter = ZoomAdapter()
+
+    class FakeHttpClient:
+        def __init__(self):
+            self.calls: list[str] = []
+
+        def post(self, url, **kwargs):  # type: ignore[no-untyped-def]
+            self.calls.append(url)
+            request = httpx.Request("POST", url, headers=kwargs.get("headers"))
+            return httpx.Response(200, request=request, json={"access_token": "cached-token", "expires_in": 3600})
+
+    fake_http = FakeHttpClient()
+    with session_scope(session_factory) as session:
+        ensure_defaults(session, app_config)
+        owner = seed_user(session)
+        destination = create_destination(session, owner=owner, plugin_id="zoom", name="Zoom cache")
+        destination.config_json = {"account_id": "acct-123", "client_id": "client-abc", "sender_user_id": "me"}
+        set_secret_value(
+            session,
+            secret_manager=secret_manager,
+            destination=destination,
+            secret_key="client_secret",
+            label="Client secret",
+            value="secret-xyz",
+        )
+        first = adapter._get_access_token(session, destination, secret_manager, fake_http)  # type: ignore[arg-type]
+        second = adapter._get_access_token(session, destination, secret_manager, fake_http)  # type: ignore[arg-type]
+
+    assert first == "cached-token"
+    assert second == "cached-token"
+    assert fake_http.calls == ["https://zoom.us/oauth/token"]
+
+
+def test_zoom_send_image_returns_token_failure_when_token_endpoint_errors(app_config, session_factory):
+    secret_manager = SecretManager(app_config.master_key)
+    adapter = ZoomAdapter()
+
+    class FakeHttpClient:
+        def post(self, url, **kwargs):  # type: ignore[no-untyped-def]
+            request = httpx.Request("POST", url, headers=kwargs.get("headers"))
+            response = httpx.Response(401, request=request, text="invalid client")
+            response.raise_for_status()
+
+    asset = PreparedAsset(filename="frog.png", media_type="image/png", payload=b"frog-bytes", size_bytes=10)
+    with session_scope(session_factory) as session:
+        ensure_defaults(session, app_config)
+        owner = seed_user(session)
+        destination = create_destination(session, owner=owner, plugin_id="zoom", name="Zoom failure")
+        destination.config_json = {"account_id": "acct-123", "client_id": "client-abc", "sender_user_id": "me"}
+        channel = add_channel(session, destination, name="general", enabled=True, config_values={"channel_id": "channel-42"})
+        set_secret_value(
+            session,
+            secret_manager=secret_manager,
+            destination=destination,
+            secret_key="client_secret",
+            label="Client secret",
+            value="secret-xyz",
+        )
+        result = adapter.send_image(session, destination, channel, asset, "", secret_manager, FakeHttpClient())  # type: ignore[arg-type]
+
+    assert result.status == "permanent_failure"
+    assert "Zoom token request failed" in result.error_message
+    assert "401 Unauthorized" in result.error_message
 
 
 def test_check_report_emits_plugin_env(app_config):
