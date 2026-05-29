@@ -46,6 +46,7 @@
 - Keep Zoom token acquisition compatible with the custom outbound HTTP client by sending OAuth client credentials as an explicit HTTP Basic `Authorization` header instead of relying on `httpx` `auth=` convenience kwargs that the wrapper does not forward.
 - Harden bootstrap secret handling with `_FILE` variants, startup rejection of placeholder or shorter-than-32-character values, explicit high-memory Argon2id parameters, and redacted structured logging.
 - Keep the Python dependency floor current for security fixes, including patched `cryptography` and `Pillow` versions, and add an automated dependency-audit workflow that runs `pip-audit` in CI.
+- Keep the Python dependency floor current for security fixes, including patched `cryptography`, `Pillow`, `python-multipart`, `starlette`, `mako`, and `idna` / `urllib3` resolution floors where the repo controls them, and add an automated dependency-audit workflow that runs `pip-audit` in CI.
 - Make key rotation HA-safe: add `WEDNESDAY_FROG_PREVIOUS_MASTER_KEY` and `_FILE` support so decryption tries current key first and previous key second during rollout. `wednesday-frog rekey-secrets` rewrites stored secrets with the current key, after which the previous key can be removed.
 - Add a stricter CSP and use a per-request script nonce for the retained Ko-fi widget bootstrap instead of allowing blanket inline script execution.
 - Add a site-wide footer on every rendered page that attributes the app to `github.com/herooftimeandspace`.
@@ -122,6 +123,7 @@
 - Verify schema-driven admin forms render correctly, validate server-side, and preserve masked-secret behavior.
 - Verify startup rejects weak bootstrap secrets, dual-key decryption works during rotation, and `rekey-secrets` rewrites data safely.
 - Verify dependency-audit automation runs in CI and the repo installs the patched `cryptography` and `Pillow` versions required by the security baseline.
+- Verify dependency-audit automation runs in CI and the resolved environment installs patched versions for the repo-controlled vulnerable packages surfaced by `pip-audit`.
 - Verify `/metrics` returns `404` when no metrics token is configured, rejects bad tokens, and exposes Prometheus-format data when the correct token is present.
 - Verify `/health/ready` returns a redacted summary to anonymous callers while detailed validation remains in the authenticated validation API.
 - Verify the outbound SSRF guard blocks private and reserved targets by default and still allows explicitly allowlisted internal Mattermost hosts.
